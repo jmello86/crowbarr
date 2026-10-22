@@ -80,7 +80,18 @@ def _recognize(audio: Path, settings: Settings, cache: Path):
         raise ReviewRequired("No speech found in the selected audio track")
     # Use the same Silero VAD as faster-whisper, retaining original timestamps by
     # passing clip boundaries instead of concatenating speech and losing offsets.
-    clips = [sample / 16000 for span in speech for sample in (span["start"], span["end"])]
+    # Whisper rounds clip times to 10 ms frames, but its spectrogram truncates
+    # partial frames. An endpoint rounded beyond the final frame can leave its
+    # transcription loop repeatedly decoding an empty trailing window.
+    frames = len(samples) // 160
+    clips = []
+    for span in speech:
+        start = min(round(span["start"] / 160), frames)
+        end = min(round(span["end"] / 160), frames)
+        if start < end:
+            clips.extend((start / 100, end / 100))
+    if not clips:
+        raise ReviewRequired("No speech found in the selected audio track")
     if model.is_multilingual:
         mel = whisper.log_mel_spectrogram(
             whisper.pad_or_trim(samples), n_mels=model.dims.n_mels

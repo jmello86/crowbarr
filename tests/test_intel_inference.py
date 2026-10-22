@@ -66,6 +66,24 @@ def test_silence_requires_review_without_cpu_retry(backend, monkeypatch, tmp_pat
     assert inference.transcribe.runtime["backend"] == "xpu"
 
 
+@pytest.mark.parametrize("samples", [193886, 160001, 160159, 160160])
+def test_final_vad_endpoint_cannot_exceed_whisper_frames(
+    backend, monkeypatch, tmp_path, intel_settings, samples
+):
+    monkeypatch.setitem(sys.modules, "faster_whisper.audio", SimpleNamespace(
+        decode_audio=lambda *a, **kw: [0] * samples,
+    ))
+    backend.speech = [{"start": 0, "end": samples}]
+    inference.transcribe(tmp_path / "audio.wav", intel_settings, tmp_path)
+    assert round(backend.options["clip_timestamps"][-1] * 100) == samples // 160
+
+
+def test_subframe_vad_span_requires_review(backend, tmp_path, intel_settings):
+    backend.speech = [{"start": 160, "end": 161}]
+    with pytest.raises(ReviewRequired, match="No speech"):
+        inference.transcribe(tmp_path / "audio.wav", intel_settings, tmp_path)
+
+
 @pytest.mark.parametrize("fallback", [True, False])
 @pytest.mark.parametrize("error", [RuntimeError("decode failed"), ImportError("missing runtime")])
 def test_gpu_failures_obey_fallback_and_report_actual_backend(

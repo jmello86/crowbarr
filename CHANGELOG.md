@@ -88,6 +88,7 @@ re-audits anything.
 ### 0.4.12
 
 - Intel Arc owners can select Intel GPU · XPU with FP16 or FP32, with CPU fallback when GPU recognition fails.
+- Clamp speech clip endpoints to Whisper's final audio frame to prevent repeated decoding at the end of a clip.
 - Install the Intel image from `ghcr.io/jmello86/crowbarr:intel`; Docker and Unraid setup instructions cover GPU access and updates.
 
 ### 0.4.11
