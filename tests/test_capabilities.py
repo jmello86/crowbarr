@@ -59,10 +59,13 @@ def test_failed_probe_reports_unavailable_and_recovery(monkeypatch, failure):
     assert "five minutes" in result["cuda"]["reason"]
 
 
-def test_probe_timeout_terminates_child_and_closes_pipes(monkeypatch):
+@pytest.mark.parametrize("ready", [False, True])
+def test_probe_allows_slow_startup_and_always_cleans_up(monkeypatch, ready):
     events = []
     receive = types.SimpleNamespace(
-        poll=lambda timeout: events.append(("poll", timeout)) or False,
+        # A healthy Intel host took 27.5 seconds to return the complete report.
+        poll=lambda timeout: events.append(("poll", timeout)) or (ready and timeout >= 28),
+        recv=lambda: report(xpu=True),
         close=lambda: events.append("receive closed"),
     )
     send = types.SimpleNamespace(close=lambda: events.append("send closed"))
@@ -92,9 +95,12 @@ def test_probe_timeout_terminates_child_and_closes_pipes(monkeypatch):
         return types.SimpleNamespace(Pipe=lambda duplex: (receive, send), Process=lambda **kwargs: Process())
 
     monkeypatch.setattr(capabilities.multiprocessing, "get_context", context)
-    with pytest.raises(TimeoutError):
-        capabilities._run_probe()
-    assert ("poll", 20) in events
+    if ready:
+        assert capabilities._run_probe()["xpu"]["available"] is True
+    else:
+        with pytest.raises(TimeoutError):
+            capabilities._run_probe()
+    assert ("poll", 120) in events
     assert "terminated" in events
     assert "receive closed" in events
     assert "send closed" in events

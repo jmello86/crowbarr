@@ -85,6 +85,10 @@ release with split versioning requeues nothing.
 `APPLICATION_VERSION`. Identifies a published release. Changing it alone never
 re-audits anything.
 
+### 0.4.13
+
+- Allow runtime detection up to two minutes for library imports and Intel GPU initialization. Healthy Unraid installations that needed more than 20 seconds were incorrectly reported as having no GPU.
+
 ### 0.4.12
 
 - Intel Arc owners can select Intel GPU · XPU with FP16 or FP32, with CPU fallback when GPU recognition fails.

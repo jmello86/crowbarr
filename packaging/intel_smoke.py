@@ -17,10 +17,15 @@ def main():
     import torch
     import whisper
 
+    from crowbarr.capabilities import _run_probe
     from crowbarr.config import Settings
     from crowbarr.intel_inference import _recognize
 
     check_imports()
+    print("Checking complete runtime detection in a fresh subprocess", flush=True)
+    capabilities = _run_probe()
+    for name in ("cpu", "refinement"):
+        assert capabilities[name]["available"], capabilities[name]["reason"]
     assert "+xpu" in torch.__version__, f"Expected XPU Torch, found {torch.__version__}"
     torch.set_num_threads(2)
     fixture = Path(__file__).parent / "fixtures" / "speech.flac"

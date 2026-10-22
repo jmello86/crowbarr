@@ -156,7 +156,10 @@ def _run_probe() -> dict:
     try:
         process.start()
         send.close()
-        if not receive.poll(20):
+        # Importing alignment libraries and initializing the XPU driver can exceed
+        # 20 seconds on a healthy Unraid host. Keep discovery bounded, but allow
+        # cold runtime startup to finish without reporting a working GPU missing.
+        if not receive.poll(120):
             raise TimeoutError("Runtime probe timed out")
         return receive.recv()
     finally:

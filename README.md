@@ -27,6 +27,8 @@ Intel Arc GPUs on Linux x86_64, including Unraid. `latest-intel` is an alias for
 the same verified build. See [Unraid / Arc A770](docs/unraid.md#intel-arc-a770)
 or [Intel Docker Compose](docs/docker.md#intel-arc) for device access and setup.
 Choose **Intel GPU · XPU** and **FP16** in Settings after installing.
+Version **0.4.13** fixes detection timeouts on Unraid hosts where inference libraries
+take more than 20 seconds to initialize. Hardware checks now allow up to two minutes.
 
 The [Intel image workflow](https://github.com/jmello86/crowbarr/actions/workflows/intel-image.yml) runs the tests,
 builds the amd64 image, and checks dependencies, real speech on CPU, and server

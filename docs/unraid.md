@@ -83,6 +83,13 @@ runtime report for `xpu`; `cpu` with a fallback reason means GPU inference faile
 Disable CPU fallback while diagnosing failures if you want the job to stop instead.
 Intel GPU memory telemetry is not currently shown on the dashboard.
 
+Hardware detection runs in the background at startup and can take around 30 seconds
+while the inference and alignment libraries initialize. Version 0.4.13 allows up to
+two minutes; earlier builds stopped after 20 seconds and could incorrectly report a
+working GPU as unavailable. If you encounter that timeout on 0.4.12, update and
+recreate the container. Completing the integration settings or downloading speech
+models is not required for detection.
+
 Unraid can check the published tag for updates. Pull the newer image and recreate
 the container to apply them. `latest-intel` is an alias for `intel`; commit tags such
 as `sha-COMMIT-intel` and digests can pin a specific build for rollback.
