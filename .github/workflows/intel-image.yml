@@ -63,12 +63,17 @@ jobs:
             org.opencontainers.image.title=Crowbarr Intel
           cache-from: type=gha,scope=intel
           cache-to: type=gha,mode=min,scope=intel,ignore-error=true
-      - name: Verify dependencies, speech adapter and spawned processing
+      - name: Verify installed dependencies
+        timeout-minutes: 3
         run: |
-          docker run --rm --entrypoint python crowbarr:intel-verify -m pip check
-          timeout 300 docker run --rm --entrypoint python \
+          timeout --kill-after=15s 120s docker run --rm --entrypoint python crowbarr:intel-verify -m pip check
+      - name: Verify speech adapter and spawned processing
+        timeout-minutes: 7
+        run: |
+          timeout --kill-after=15s 300s docker run --rm --entrypoint python \
             -v "$PWD/packaging:/checks:ro" crowbarr:intel-verify /checks/intel_smoke.py
       - name: Verify server health as the image user
+        timeout-minutes: 3
         run: |
           docker run -d --name intel-verify-server crowbarr:intel-verify
           trap 'docker logs intel-verify-server; docker rm -f intel-verify-server' EXIT

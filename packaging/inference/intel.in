@@ -3,6 +3,8 @@
 -r runtime.in
 # faster-whisper 1.2.1 uses metadata_errors, removed by PyAV 19.
 av==18.1.0
+# Keep the CPU VAD runtime on the version validated by the CPU/CUDA images.
+onnxruntime==1.29.0
 openai-whisper==20250625+crowbarr.1
 torch @ https://download-r2.pytorch.org/whl/xpu/torch-2.8.0%2Bxpu-cp312-cp312-linux_x86_64.whl#sha256=e19db8135bde12a4357e5ca09f0176083ba9e70554dd6c90725a19b21690cbad
 torchaudio @ https://download-r2.pytorch.org/whl/xpu/torchaudio-2.8.0%2Bxpu-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=9f1d68e82a2754fd4dbce6664e6e7ca84bdec1ff346ca69f034758ad8d8078c4

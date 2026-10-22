@@ -29,7 +29,8 @@ FROM dependencies AS intel
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 CROWBARR_IMAGE_VARIANT=intel \
     CROWBARR_DATA=/config HF_HOME=/config/models/huggingface \
     TORCH_HOME=/config/models/torch NLTK_DATA=/config/models/nltk HOME=/config \
-    NUMBA_CACHE_DIR=/config/models/numba PATH=/opt/venv/bin:$PATH
+    NUMBA_CACHE_DIR=/config/models/numba NUMBA_THREADING_LAYER=workqueue \
+    PATH=/opt/venv/bin:$PATH
 WORKDIR /app
 # Install the Level Zero and OpenCL userspace drivers from Intel's recommended
 # Ubuntu PPA. The Unraid host supplies the kernel driver and render device.
