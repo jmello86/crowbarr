@@ -203,8 +203,8 @@ class Settings(BaseModel):
     @field_validator("device")
     @classmethod
     def valid_device(cls, value: str) -> str:
-        if value not in {"cpu", "cuda"}:
-            raise ValueError("Choose cpu or cuda")
+        if value not in {"cpu", "cuda", "xpu"}:
+            raise ValueError("Choose cpu, cuda or xpu")
         return value
 
     @field_validator("model")

@@ -13,10 +13,12 @@ from crowbarr import capabilities
 from crowbarr.app import create_app
 
 
-def report(cuda=False, refinement=False):
+def report(cuda=False, refinement=False, xpu=False):
     return {
         "cpu": {"available": True, "reason": "", "compute_types": ["int8", "float32"]},
         "cuda": {"available": cuda, "reason": "Use the CUDA image with GPU access.", "compute_types": []},
+        "xpu": {"available": xpu, "reason": "Use the Intel image with GPU access.",
+                "compute_types": ["float16", "float32"] if xpu else []},
         "refinement": {"available": refinement, "reason": "WhisperX unavailable."},
     }
 
@@ -179,6 +181,47 @@ def test_available_cuda_can_be_selected_and_cpu_precision_is_validated(client, m
     assert client.put("/api/settings", json={"device": "cuda", "compute_type": "float16"}).status_code == 200
     assert client.put("/api/settings", json={"device": "cpu"}).status_code == 422
     assert client.put("/api/settings", json={"device": "cpu", "compute_type": "int8"}).status_code == 200
+
+
+def test_intel_selection_requires_hardware_and_supported_precision(client, monkeypatch):
+    response = client.put("/api/settings", json={"device": "xpu", "compute_type": "float16"})
+    assert response.status_code == 422
+    assert "Intel image" in response.json()["detail"]
+    monkeypatch.setattr(capabilities, "runtime_capabilities", lambda block=True: report(xpu=True))
+    assert client.put("/api/settings", json={"device": "xpu", "compute_type": "int8"}).status_code == 422
+    assert client.put("/api/settings", json={"device": "xpu", "compute_type": "float16"}).status_code == 200
+    assert client.put("/api/settings", json={"compute_type": "float32"}).status_code == 200
+    assert client.put("/api/settings", json={"device": "cpu", "compute_type": "int8"}).status_code == 200
+
+
+def test_intel_inventory_requires_both_checkpoint_formats(tmp_path, monkeypatch):
+    monkeypatch.setenv("CROWBARR_IMAGE_VARIANT", "intel")
+    (tmp_path / "models/whisper/models--Systran--faster-whisper-small.en").mkdir(parents=True)
+    intel = tmp_path / "models/whisper-xpu"
+    intel.mkdir()
+    (intel / "small.en.pt").touch()
+    assert capabilities.model_inventory(tmp_path)["speech"] == []
+    (intel / "small.en.ready").touch()
+    assert capabilities.model_inventory(tmp_path)["speech"] == ["small.en"]
+
+
+@pytest.mark.parametrize("accessible", [True, False])
+def test_intel_probe_exercises_device_access(monkeypatch, accessible):
+    def ones(*args, **kwargs):
+        assert kwargs["device"] == "xpu"
+        if not accessible:
+            raise RuntimeError("permission denied")
+        return types.SimpleNamespace(cpu=lambda: None)
+
+    monkeypatch.setitem(sys.modules, "whisper", types.ModuleType("whisper"))
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(
+        xpu=types.SimpleNamespace(is_available=lambda: True), ones=ones,
+    ))
+    namespace = {}
+    exec(capabilities._PROBE, namespace)
+    result = namespace["result"]["xpu"]
+    assert result["available"] is accessible
+    assert result["compute_types"] == (["float16", "float32"] if accessible else [])
 
 
 def test_every_numeric_default_is_valid_for_its_own_input(tmp_path):
@@ -366,6 +409,15 @@ assert.equal(context.draftDirty, true);
 elements.device.value = "cuda";
 change({target: {name: "device", closest: () => true}});
 assert.equal(elements.compute_type.options.find(option => option.value === "float16").disabled, false);
+context.settings.capabilities.xpu = {available: true};
+elements.device.value = "xpu";
+change({target: {name: "device", closest: () => true}});
+assert.equal(elements.compute_type.value, "float16");
+assert.ok(elements.compute_type.options.find(option => option.value === "int8").disabled);
+assert.ok(elements.compute_type.options.find(option => option.value === "int8_float16").disabled);
+assert.equal(elements.compute_type.options.find(option => option.value === "float32").disabled, false);
+assert.match(nodes["precision-help"].textContent, /Precision changed to FP16/);
+assert.match(vm.runInContext("settingsPage()", context), /value="xpu" selected/);
 '''
     result = subprocess.run(
         [node, "-e", script], cwd=Path(__file__).resolve().parents[1],

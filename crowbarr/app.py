@@ -378,15 +378,19 @@ def create_app(directory: Path | None = None, background: bool = True) -> FastAP
             raise HTTPException(422, "; ".join(details)) from None
         if settings.device == "cpu" and settings.compute_type in {"float16", "int8_float16"}:
             raise HTTPException(422, "CPU processing requires int8 or float32 compute")
-        # Only turning CUDA on needs the hardware answer, so only that change waits for
+        if settings.device == "xpu" and settings.compute_type not in {"float16", "float32"}:
+            raise HTTPException(422, "Intel GPU processing requires float16 or float32 compute")
+        # Only turning a GPU on needs the hardware answer, so only that change waits for
         # the probe. Saving anything else must not import the inference stack.
-        if settings.device == "cuda" and previous.device != "cuda":
+        if settings.device in {"cuda", "xpu"} and previous.device != settings.device:
             runtime = capabilities_for(store.directory)
-            if not runtime["cuda"]["available"]:
-                raise HTTPException(422, runtime["cuda"]["reason"])
+            if not runtime[settings.device]["available"]:
+                raise HTTPException(422, runtime[settings.device]["reason"])
         # A model is chosen after it is downloaded, never before. Otherwise the first
         # job to run pays for the download and looks like it has stalled.
-        if settings.model != previous.model and settings.model not in model_inventory(store.directory)["speech"]:
+        if settings.model != previous.model and settings.model not in model_inventory(
+            store.directory, device=settings.device
+        )["speech"]:
             raise HTTPException(422, f"Download the {settings.model} model before selecting it")
         if settings.discovery_fingerprint() != previous.discovery_fingerprint():
             db.invalidate_sync()

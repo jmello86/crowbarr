@@ -10,3 +10,5 @@ crowbarr/**/__pycache__
 !packaging/inference/build_alignment.py
 !packaging/inference/cpu.lock
 !packaging/inference/cuda.lock
+!packaging/inference/intel.lock
+!packaging/inference/build_reference_whisper.py

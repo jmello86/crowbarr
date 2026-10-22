@@ -1,0 +1,99 @@
+name: Publish Intel image
+
+on:
+  push:
+    branches: [intel]
+    paths:
+      - .github/workflows/intel-image.yml
+      - .github/workflows/test.yml
+      - .dockerignore
+      - Dockerfile.intel
+      - pyproject.toml
+      - README.md
+      - crowbarr/**
+      - packaging/**
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: crowbarr-intel-image
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    uses: ./.github/workflows/test.yml
+    permissions:
+      contents: read
+
+  publish:
+    name: Build, verify and publish Intel amd64
+    needs: tests
+    if: github.ref == 'refs/heads/intel'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free space for the XPU runtime
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost
+          sudo docker image prune -af
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build candidate
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.intel
+          platforms: linux/amd64
+          load: true
+          tags: crowbarr:intel-verify
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.title=Crowbarr Intel
+          cache-from: type=gha,scope=intel
+          cache-to: type=gha,mode=min,scope=intel,ignore-error=true
+      - name: Verify dependencies, speech adapter and spawned processing
+        run: |
+          docker run --rm --entrypoint python crowbarr:intel-verify -m pip check
+          timeout 300 docker run --rm --entrypoint python \
+            -v "$PWD/packaging:/checks:ro" crowbarr:intel-verify /checks/intel_smoke.py
+      - name: Verify server health as the image user
+        run: |
+          docker run -d --name intel-verify-server crowbarr:intel-verify
+          trap 'docker logs intel-verify-server; docker rm -f intel-verify-server' EXIT
+          for attempt in {1..30}; do
+            if docker exec intel-verify-server python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8449/health', timeout=3)"; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+      - name: Publish commit image
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          tag="$image:sha-$GITHUB_SHA-intel"
+          docker tag crowbarr:intel-verify "$tag"
+          docker push "$tag"
+          docker buildx imagetools inspect "$tag"
+          echo "Intel image: \`$tag\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: Promote Intel channels if this is still the branch head
+        run: |
+          head="$(git ls-remote origin refs/heads/intel | cut -f1)"
+          if [[ "$head" != "$GITHUB_SHA" ]]; then
+            echo "A newer Intel commit exists; leaving channel tags to its build."
+            exit 0
+          fi
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          docker buildx imagetools create -t "$image:intel" -t "$image:latest-intel" "$image:sha-$GITHUB_SHA-intel"
+          echo "Published \`$image:intel\` and \`$image:latest-intel\`." >> "$GITHUB_STEP_SUMMARY"

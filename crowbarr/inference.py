@@ -81,6 +81,11 @@ def verify_audio_language(audio: Path, settings: Settings, cache: Path) -> dict:
 
 
 def transcribe(audio: Path, settings: Settings, cache: Path) -> tuple[list[Word], list[str]]:
+    if settings.device == "xpu":
+        from .intel_inference import transcribe_intel
+
+        return transcribe_intel(audio, settings, cache)
+
     from faster_whisper import WhisperModel
 
     global _resident, _resident_key, _resident_runtime
@@ -173,9 +178,9 @@ def align(
     import whisperx
 
     torch.set_num_threads(settings.cpu_threads)
-    # Recognition uses the GPU through CTranslate2. Alignment runs on Torch, which is
-    # the CPU build in every image, so asking for CUDA here only fails and retries.
-    backends = ["cpu"] if not torch.cuda.is_available() else [settings.device]
+    # Recognition uses CTranslate2 or XPU. Alignment runs on the CPU in the images;
+    # a native installation with CUDA Torch may also support CUDA alignment.
+    backends = ["cpu"] if settings.device == "xpu" or not torch.cuda.is_available() else [settings.device]
     if backends[0] == "cuda" and settings.cpu_fallback:
         backends.append("cpu")
     for backend in backends:

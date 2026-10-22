@@ -85,6 +85,11 @@ release with split versioning requeues nothing.
 `APPLICATION_VERSION`. Identifies a published release. Changing it alone never
 re-audits anything.
 
+### 0.4.12
+
+- Intel Arc owners can select Intel GPU · XPU with FP16 or FP32, with CPU fallback when GPU recognition fails.
+- Install the Intel image from `ghcr.io/jmello86/crowbarr:intel`; Docker and Unraid setup instructions cover GPU access and updates.
+
 ### 0.4.11
 
 - Fixed restart race condition where "database is locked" errors during upgrade (and in later

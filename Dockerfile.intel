@@ -1,0 +1,49 @@
+# syntax=docker/dockerfile:1
+# Intel Arc is an amd64 target. Build with --platform linux/amd64.
+FROM ubuntu:24.04 AS python-base
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 python3-venv ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM python-base AS dependencies
+ENV PYTHONDONTWRITEBYTECODE=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+COPY packaging/inference/build_alignment.py packaging/inference/build_reference_whisper.py /builders/
+RUN python3 /builders/build_alignment.py --output /wheels \
+    && python3 /builders/build_reference_whisper.py --output /wheels
+COPY packaging/inference/intel.lock /runtime.lock
+RUN python3 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir --no-compile --require-hashes \
+       --only-binary=:all: --find-links=/wheels -r /runtime.lock \
+    && /opt/venv/bin/pip check
+
+FROM dependencies AS application
+WORKDIR /app
+COPY pyproject.toml README.md LICENSE ./
+COPY crowbarr ./crowbarr
+RUN /opt/venv/bin/pip wheel --no-deps --no-build-isolation --wheel-dir /app-wheel .
+
+# Reuse the large XPU runtime layer rather than copying a second copy into the
+# final stage. The application builder's sources remain in its separate stage.
+FROM dependencies AS intel
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 CROWBARR_IMAGE_VARIANT=intel \
+    CROWBARR_DATA=/config HF_HOME=/config/models/huggingface \
+    TORCH_HOME=/config/models/torch NLTK_DATA=/config/models/nltk HOME=/config \
+    NUMBA_CACHE_DIR=/config/models/numba PATH=/opt/venv/bin:$PATH
+WORKDIR /app
+# Install the Level Zero and OpenCL userspace drivers from Intel's recommended
+# Ubuntu PPA. The Unraid host supplies the kernel driver and render device.
+RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common \
+    && add-apt-repository -y ppa:kobuk-team/intel-graphics \
+    && apt-get update && apt-get install -y --no-install-recommends \
+      ffmpeg libgomp1 libze-intel-gpu1 libze1 intel-opencl-icd \
+    && apt-get purge -y software-properties-common \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /config && chown 1000:1000 /config
+RUN --mount=type=bind,from=application,source=/app-wheel,target=/app-wheel \
+    pip install --no-cache-dir --no-compile --no-deps /app-wheel/*.whl && pip check \
+    && rm -rf /builders /wheels /runtime.lock
+USER 1000:1000
+EXPOSE 8449
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8449/health', timeout=3)"
+ENTRYPOINT ["crowbarr"]

@@ -700,6 +700,7 @@ function settingsPage() {
     : "every media file";
   const cpuAvailable = checking || capabilities?.cpu?.available === true;
   const cudaAvailable = checking || capabilities?.cuda?.available === true;
+  const xpuAvailable = checking || capabilities?.xpu?.available === true;
   const refinementAvailable = capabilities?.refinement?.available === true;
   const downloaded = new Set(capabilities?.models?.speech || []);
   const fetching = capabilities?.models?.speech_downloads || {};
@@ -717,7 +718,10 @@ function settingsPage() {
     cudaAvailable
       ? "An NVIDIA graphics card was found. Loading the model can still fail if its memory runs short."
       : capabilities?.cuda?.reason || "CUDA availability could not be determined.",
-    settings.device === "cuda" && !cudaAvailable
+    capabilities?.xpu?.available === true
+      ? "An Intel graphics card was found. Intel GPU processing supports FP16 and FP32."
+      : settings.device === "xpu" ? capabilities?.xpu?.reason || "Intel GPU is unavailable." : "",
+    (settings.device === "cuda" && !cudaAvailable) || (settings.device === "xpu" && !xpuAvailable)
       ? settings.cpu_fallback
         ? "Crowbarr is set to use a graphics card, but none is available. Processing runs on the CPU instead."
         : "Crowbarr is set to use a graphics card, but none is available. Turn on CPU fallback or choose CPU, or jobs will not run."
@@ -747,6 +751,7 @@ function settingsPage() {
         select("device", "Processing device", [
           ["cpu", cpuAvailable ? "CPU" : "CPU (unavailable)", !cpuAvailable],
           ["cuda", cudaAvailable ? "NVIDIA GPU · CUDA" : "NVIDIA GPU · CUDA (unavailable)", !cudaAvailable],
+          ["xpu", xpuAvailable ? "Intel GPU · XPU" : "Intel GPU · XPU (unavailable)", !xpuAvailable],
         ], `<span id="device-help" aria-live="polite">${esc(deviceHelp)}</span>`) +
         select(
           "compute_type",
@@ -759,9 +764,10 @@ function settingsPage() {
               int8_float16: "INT8 and FP16 (graphics card only)",
               float16: "FP16 (graphics card only)",
             }[type],
-            settings.device === "cpu" && type.includes("float16"),
+            (settings.device === "cpu" && type.includes("float16")) ||
+              (settings.device === "xpu" && type.includes("int8")),
           ]),
-          '<span id="precision-help" aria-live="polite">Lower precision uses less memory and runs faster, with a small loss of accuracy. The CPU supports INT8 and FP32 only.</span>',
+          '<span id="precision-help" aria-live="polite">Lower precision uses less memory and runs faster, with a small loss of accuracy. The CPU supports INT8 and FP32; Intel GPUs support FP16 and FP32.</span>',
         ) +
         numeric(
           "cpu_threads",
@@ -1736,19 +1742,25 @@ document.addEventListener("change", async (event) => {
     const form = $("settings-form");
     const precision = form.elements.compute_type;
     const cpu = form.elements.device.value === "cpu";
+    const xpu = form.elements.device.value === "xpu";
     for (const option of precision.options)
-      option.disabled = cpu && option.value.includes("float16");
+      option.disabled = (cpu && option.value.includes("float16")) || (xpu && option.value.includes("int8"));
     if (cpu && precision.value.includes("float16")) {
       precision.value = "int8";
       $("precision-help").textContent = "Precision changed to INT8 because the CPU cannot use FP16. Save changes to apply.";
     }
+    if (xpu && precision.value.includes("int8")) {
+      precision.value = "float16";
+      $("precision-help").textContent = "Precision changed to FP16 for the Intel GPU. Save changes to apply.";
+    }
     captureSettings();
     refreshSaveActions();
-    const help = settings.device === "cuda" && settings.capabilities?.cuda?.available === false
+    const help = ["cuda", "xpu"].includes(settings.device) &&
+      settings.capabilities?.[settings.device]?.available === false
       ? settings.cpu_fallback
         ? "Crowbarr is set to use a graphics card, but none is available. Processing runs on the CPU instead."
         : "Crowbarr is set to use a graphics card, but none is available. Turn on CPU fallback or choose CPU, or jobs will not run."
-      : "The CPU works on any machine. CUDA needs an NVIDIA graphics card that Crowbarr can reach.";
+      : "The CPU works on any machine. CUDA needs an NVIDIA graphics card; XPU needs an Intel graphics card and the Intel image.";
     $("device-help").textContent = help;
     dirty = draftDirty = true;
     $("save-state").textContent = "Unsaved changes";

@@ -16,13 +16,23 @@ See [workflow.html](workflow.html) for a complete pipeline walkthrough and [CHAN
 - Transcribes speech with Whisper when no subtitle is available
 - Integrates with Sonarr & Radarr via scheduled polling or instant webhooks
 - On-demand audit or fresh transcription for any title
-- CPU by default, NVIDIA CUDA acceleration supported
+- CPU by default, NVIDIA CUDA and Intel Arc XPU acceleration available
 
 ---
 
 ## Installation
 
-Docker images published per release for `linux/amd64`:
+This fork's `intel` branch publishes **`ghcr.io/jmello86/crowbarr:intel`** for
+Intel Arc GPUs on Linux x86_64, including Unraid. `latest-intel` is an alias for
+the same verified build. See [Unraid / Arc A770](docs/unraid.md#intel-arc-a770)
+or [Intel Docker Compose](docs/docker.md#intel-arc) for device access and setup.
+Choose **Intel GPU · XPU** and **FP16** in Settings after installing.
+
+The [Intel image workflow](https://github.com/jmello86/crowbarr/actions/workflows/intel-image.yml) runs the tests,
+builds the amd64 image, and checks dependencies, real speech on CPU, and server
+health before publishing. Actual XPU inference must be verified on your Intel host.
+
+CPU/CUDA images and the native installer below come from the upstream project:
 - `ghcr.io/amanofvaly/crowbarr:latest` (CPU)
 - `ghcr.io/amanofvaly/crowbarr:latest-cuda` (NVIDIA)
 
@@ -54,6 +64,8 @@ Open `http://YOUR-IP-ADDRESS:8449`. Data is stored in `/var/lib/crowbarr`.
 
 - **Native Linux**: Run `sudo crowbarr-update`.
 - **Docker / Containers**: Pull the latest image and recreate the container (or use the [release-only Portainer setup](docs/nas.md#portainer)).
+- **Intel fork**: Pull `ghcr.io/jmello86/crowbarr:intel` and recreate the container.
+  The channel advances after successful builds from `intel`; no local build is required.
 
 Data and queues in `/var/lib/crowbarr` are preserved across updates; interrupted jobs resume automatically. When an update changes the audit policy, `review` and `failed` jobs are automatically re-evaluated.
 
@@ -162,6 +174,7 @@ To build container images locally:
 ```sh
 docker build -t crowbarr:dev .                          # CPU
 docker build -f Dockerfile.cuda -t crowbarr:dev-cuda .   # NVIDIA
+docker build --platform linux/amd64 -f Dockerfile.intel -t crowbarr:local-intel . # Intel Arc
 ```
 
 ---

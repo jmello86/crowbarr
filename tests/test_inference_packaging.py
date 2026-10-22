@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import tarfile
 import zipfile
 from pathlib import Path
 
@@ -21,6 +22,7 @@ def load(name, path):
 
 
 alignment = load("alignment_wheel", "packaging/inference/build_alignment.py")
+reference = load("reference_whisper", "packaging/inference/build_reference_whisper.py")
 image_size = load("image_size", "packaging/image_size.py")
 inference_check = load("inference_check", "packaging/inference_check.py")
 
@@ -28,6 +30,30 @@ inference_check = load("inference_check", "packaging/inference_check.py")
 def test_alignment_rejects_unverified_source():
     with pytest.raises(ValueError, match="checksum"):
         alignment.build(b"unexpected upstream bytes")
+    with pytest.raises(ValueError, match="checksum"):
+        reference.build(b"unexpected upstream bytes")
+
+
+def test_reference_whisper_preserves_sources_without_conflicting_cuda_triton(monkeypatch):
+    source = io.BytesIO()
+    originals = {"whisper/__init__.py": b"# upstream", "whisper/assets/mel_filters.npz": b"filters",
+                 "LICENSE": b"MIT license"}
+    with tarfile.open(fileobj=source, mode="w:gz") as archive:
+        for name, content in originals.items():
+            member = tarfile.TarInfo(f"openai_whisper-20250625/{name}")
+            member.size = len(content)
+            archive.addfile(member, io.BytesIO(content))
+    monkeypatch.setattr(reference, "UPSTREAM_SHA256", hashlib.sha256(source.getvalue()).hexdigest())
+    result = reference.build(source.getvalue())
+    assert result == reference.build(source.getvalue())
+    with zipfile.ZipFile(io.BytesIO(result)) as wheel:
+        for name, content in originals.items():
+            if name.startswith("whisper/"):
+                assert wheel.read(name) == content
+        metadata = wheel.read(next(name for name in wheel.namelist() if name.endswith("/METADATA"))).decode()
+        assert "Requires-Dist: torch~=2.8.0" in metadata
+        assert "Requires-Dist: triton" not in metadata
+        assert wheel.read(next(name for name in wheel.namelist() if name.endswith("/LICENSE"))) == b"MIT license"
 
 
 def test_alignment_wheel_preserves_source_license_and_has_valid_record(monkeypatch):

@@ -44,7 +44,7 @@ Status values:
 | Native Linux arm64 | none | `not started` | Depends on the arm64 image work |
 | NVIDIA CUDA | `latest-cuda` image, device reservation, CUDA chosen in Settings | `manual` | Detect the device reservation and default to CUDA on first start |
 | AMD ROCm | none | `not started` | Check CTranslate2 support before planning |
-| Intel Arc / oneAPI | none | `not started` | Check CTranslate2 support before planning |
+| Intel Arc / XPU | `ghcr.io/jmello86/crowbarr:intel`, render-device passthrough, XPU chosen in Settings | `manual` | Verify real GPU inference on an Arc A770 / Unraid host |
 | Apple Metal | none | `not started` | Depends on the macOS build; CTranslate2 has no Metal backend, so CPU only at first |
 
 Two items apply to every platform and block `shipped` everywhere:
@@ -175,7 +175,12 @@ CUDA works when the user picks the CUDA image, adds the device reservation and s
 CUDA in Settings.
 
 - Default to CUDA when the container can see a GPU on first start.
-- ROCm and Intel: check CTranslate2 support before planning anything.
+- Intel Arc: reference Whisper runs on PyTorch XPU in this fork's `intel` image.
+  Add the render device and its numeric group, then select XPU and FP16 in Settings.
+  CPU language verification, alignment and fallback remain available. CI verifies
+  the image and CPU speech adapter; actual GPU execution needs an Intel host.
+  See [Unraid](docs/unraid.md#intel-arc-a770).
+- ROCm: check CTranslate2 support before planning anything.
 - Apple Metal: no CTranslate2 backend, so the macOS build is CPU only until that changes.
 
 ### Cross-platform items

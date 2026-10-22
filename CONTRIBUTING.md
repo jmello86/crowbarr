@@ -28,6 +28,12 @@ Every version bump requires an entry in `CHANGELOG.md` under the corresponding v
 
 ## Releases & Packaging
 
+- This fork's `intel` branch uses `intel-image.yml` to test, build and publish
+  `ghcr.io/jmello86/crowbarr:intel` and `latest-intel`, plus a `sha-COMMIT-intel` tag.
+  Publishing requires the installed-runtime smoke checks and server health check.
+  GitHub-hosted runners have no Intel GPU; record real XPU verification separately.
+- The upstream CPU/CUDA and native release workflow below still targets `main`.
+
 - Pushing a new `APPLICATION_VERSION` to `main` triggers the release workflow (builds native packages/containers and creates tags/releases). Do not create release tags manually.
 - For packaging changes, run the Release workflow with `verify_only` on your branch to validate native dependencies before release.
 

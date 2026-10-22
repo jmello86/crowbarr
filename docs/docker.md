@@ -7,11 +7,12 @@ Linux x86_64 (`linux/amd64`) only. No ARM64 images, no Windows or macOS packages
 - `ghcr.io/amanofvaly/crowbarr:latest` for CPU.
 - `ghcr.io/amanofvaly/crowbarr:latest-cuda` for an NVIDIA card the container can
   reach. It adds cuBLAS, about 600 MB more.
+- `ghcr.io/jmello86/crowbarr:intel` for Intel Arc (this fork); see [Intel Arc](#intel-arc).
 
 The GPU is used for speech recognition, which is the slow part. Subtitle timing
-refinement runs on the CPU in both images.
+refinement runs on the CPU in all variants.
 
-Speech models are not in either image. They download on first use into `/config`.
+Speech models are not included in the images. They download into `/config`.
 
 With the CUDA image, install the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html),
@@ -81,6 +82,53 @@ reservation to the same service:
 
 Set the processing device to CUDA in Settings. Until you do, it runs on the CPU.
 On TrueNAS, use its own GPU support instead of installing drivers on the host.
+
+## Intel Arc
+
+The Intel variant uses reference Whisper with PyTorch XPU. The image includes
+Intel's Level Zero and OpenCL userspace drivers; the Linux host must expose a working
+Intel render device. See the [Intel driver guide](https://dgpu-docs.intel.com/installation-guides/installing-packages-from-the-intel-ppa.html)
+for the userspace packages and the [Unraid guide](unraid.md#intel-arc-a770) for Unraid.
+
+From this repository, copy `.env.example` to `.env` and set the storage paths.
+Identify your Intel device with `ls -l /dev/dri/by-path/`, then set
+`CROWBARR_INTEL_RENDER_DEVICE` to its render node and `CROWBARR_RENDER_GID` to the
+numeric group reported by `stat -c '%g' /dev/dri/renderD128` (use the actual node).
+
+```sh
+docker compose -f compose.yaml -f compose.intel.yaml pull
+docker compose -f compose.yaml -f compose.intel.yaml up -d
+```
+
+Use the Intel override with the base file. Remove the CUDA override and any NVIDIA
+device reservations from your deployment when migrating. In **Settings → Processing**,
+choose **Intel GPU · XPU** and **FP16** (or FP32). INT8 is available only on the
+CPU/CUDA backends. Existing settings remain in `/config` and must be switched
+explicitly from CPU or CUDA to XPU.
+
+Allow space for the roughly 7–8 GB unpacked Intel image, plus model storage under
+`/config`. Building locally needs at least 12 GB of free Docker storage.
+The Intel image and checkpoints are larger than the CPU variant. Model downloads
+prepare both reference Whisper weights and the faster-whisper CPU fallback model.
+Language checks and WhisperX refinement run on the CPU. A failed GPU recognition
+can retry on the CPU when fallback is enabled, and the job report records this.
+The dashboard's NVIDIA VRAM telemetry does not measure Intel GPU memory.
+
+`intel` and `latest-intel` point to the same verified build from this fork's `intel`
+branch. Each build also publishes `sha-COMMIT-intel`, where `COMMIT` is the full
+Git commit ID. Set `CROWBARR_INTEL_IMAGE` in `.env` to that tag or an image digest
+to pin a build. Pull and recreate the container to update; appdata stays mounted.
+
+To build locally instead:
+
+```sh
+docker build --platform linux/amd64 -f Dockerfile.intel -t crowbarr:local-intel .
+CROWBARR_INTEL_IMAGE=crowbarr:local-intel docker compose -f compose.yaml -f compose.intel.yaml up -d --pull never
+```
+
+GitHub Actions checks the installed packages, the adapter's real speech timestamps
+and confidence on CPU, and server health before publishing. Hosted CI has no Intel
+GPU, so confirm XPU execution on your host using the [Unraid checks](unraid.md#intel-arc-a770).
 
 ## First run
 

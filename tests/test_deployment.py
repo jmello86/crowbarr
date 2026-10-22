@@ -70,3 +70,20 @@ def test_gpu_migration_preserves_existing_paths_identity_and_version(compose):
     assert service["ports"][0]["published"] == "18449"
     assert {m["target"] for m in service["volumes"]} == {"/config", "/tv", "/movies"}
     assert service["deploy"]["resources"]["reservations"]["devices"][0]["capabilities"] == ["gpu"]
+
+
+def test_intel_render_device_and_group_are_passed_through_without_nvidia(compose):
+    result = compose({
+        "CROWBARR_CONFIG_DIR": "/srv/app/config", "CROWBARR_MEDIA_DIR": "/srv/media",
+        "CROWBARR_UID": "99", "CROWBARR_GID": "100",
+        "CROWBARR_RENDER_GID": "18", "CROWBARR_INTEL_RENDER_DEVICE": "/dev/dri/renderD129",
+    }, "compose.intel.yaml")
+    assert result.returncode == 0, result.stderr
+    service = json.loads(result.stdout)["services"]["crowbarr"]
+    assert service["image"] == "ghcr.io/jmello86/crowbarr:intel"
+    assert service["user"] == "99:100"
+    assert service["group_add"] == ["18"]
+    assert service["devices"][0]["source"] == "/dev/dri/renderD129"
+    assert service["devices"][0]["target"] == "/dev/dri/renderD128"
+    assert "deploy" not in service
+    assert "build" not in service

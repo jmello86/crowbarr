@@ -1,0 +1,11 @@
+# Use alongside compose.yaml, without compose.cuda.yaml:
+#   docker compose -f compose.yaml -f compose.intel.yaml up -d
+# Set the Arc render node and its numeric host group ID in .env.
+services:
+  crowbarr:
+    image: ${CROWBARR_INTEL_IMAGE:-ghcr.io/jmello86/crowbarr:intel}
+    platform: linux/amd64
+    devices:
+      - "${CROWBARR_INTEL_RENDER_DEVICE:-/dev/dri/renderD128}:/dev/dri/renderD128"
+    group_add:
+      - "${CROWBARR_RENDER_GID:?Set the numeric group ID of your Intel render device}"

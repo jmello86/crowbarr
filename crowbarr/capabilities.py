@@ -42,6 +42,16 @@ except Exception:
         reason = "This is the CPU image. Install the CUDA image and expose a compatible NVIDIA GPU to enable CUDA."
     result["cuda"] = {"available": False, "reason": reason, "compute_types": []}
 try:
+    import torch
+    import whisper
+    if not torch.xpu.is_available():
+        raise RuntimeError("No Intel GPU")
+    # Exercise the driver and device permissions, not just package presence.
+    torch.ones(1, device="xpu").cpu()
+    result["xpu"] = {"available": True, "reason": "", "compute_types": ["float16", "float32"]}
+except Exception:
+    result["xpu"] = {"available": False, "reason": "Intel GPU is unavailable. Build the Intel image, expose /dev/dri and add the render device's numeric group ID. The host needs a working Intel GPU driver.", "compute_types": []}
+try:
     import whisperx
     from whisperx.alignment import align, load_align_model
     result["refinement"] = {"available": True, "reason": "WhisperX is installed. Alignment models are loaded when needed; initialization can still fail."}
@@ -71,6 +81,12 @@ def _speech_worker(target, name):
     if name != "small":
         # Every recognition model uses the same multilingual language preflight.
         download_model("small", cache_dir=target)
+    if os.environ.get("CROWBARR_IMAGE_VARIANT") == "intel":
+        from pathlib import Path
+
+        from .intel_inference import download_model as download_intel_model
+
+        download_intel_model(name, Path(target).parent / "whisper-xpu")
 
 
 def download_state(name: str = "alignment") -> dict:
@@ -165,7 +181,7 @@ SPEECH_MODELS = (
 )
 
 
-def model_inventory(directory) -> dict:
+def model_inventory(directory, device: str | None = None) -> dict:
     """Report which models are already downloaded. Filesystem only, no imports."""
     from pathlib import Path as _Path
 
@@ -177,6 +193,12 @@ def model_inventory(directory) -> dict:
             name, marker = entry.name, "faster-whisper-"
             if entry.is_dir() and marker in name:
                 speech[name.split(marker, 1)[1]] = True
+    if device == "xpu" or (device is None and os.environ.get("CROWBARR_IMAGE_VARIANT") == "intel"):
+        speech = {
+            name: True for name in speech
+            if (models / "whisper-xpu" / f"{name}.ready").is_file()
+            and (models / "whisper-xpu" / f"{name}.pt").is_file()
+        }
     alignment = models / ALIGNMENT_MODEL
     present = alignment.is_file()
     state = download_state()
@@ -206,7 +228,7 @@ def capabilities_for(directory, block: bool = True) -> dict:
     return result
 
 
-_PROBE_KEYS = ("cpu", "cuda", "refinement")
+_PROBE_KEYS = ("cpu", "cuda", "xpu", "refinement")
 _refreshing: threading.Thread | None = None
 
 
