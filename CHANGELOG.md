@@ -85,6 +85,10 @@ release with split versioning requeues nothing.
 `APPLICATION_VERSION`. Identifies a published release. Changing it alone never
 re-audits anything.
 
+### 0.4.14
+
+- Keep queued subtitle jobs and library synchronization moving on large Sonarr and Radarr libraries.
+
 ### 0.4.13
 
 - Allow runtime detection up to two minutes for library imports and Intel GPU initialization. Healthy Unraid installations that needed more than 20 seconds were incorrectly reported as having no GPU.

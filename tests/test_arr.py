@@ -1,3 +1,5 @@
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import httpx
@@ -162,6 +164,40 @@ def test_catalog_enqueues_automatically_and_provider_is_visible(catalog_library)
     assert len(db.snapshot()["jobs"]) == 1
     assert db.snapshot()["jobs"][0]["manager"] == "radarr"
     assert db.claim(settings.providers())["media"] == str(video)
+
+
+def test_large_catalog_claim_has_bounded_database_work(tmp_path, monkeypatch):
+    """A claim must not scan the entire provider catalog for every queued file."""
+    db = Database(tmp_path / "queue.db")
+    records = [
+        {"file_id": i, "item_id": i, "path": f"/tv/{i}.mkv",
+         "remote_path": f"/tv/{i}.mkv", "title": f"Show {i}"}
+        for i in range(3000)
+    ]
+    db.replace_catalog("sonarr", records, "current")
+    db.replace_catalog("radarr", [], "current")
+    now = time.time()
+    with db.connect() as connection:
+        connection.executemany(
+            "INSERT INTO jobs(media,signature,state,created,updated,ready) VALUES (?,?,'queued',?,?,0)",
+            [(r["path"], "revision", now, now) for r in records[-500:]],
+        )
+    connect = db.connect
+    steps = 0
+
+    def over_budget():
+        nonlocal steps
+        steps += 1000
+        return steps > 2_000_000
+
+    @contextmanager
+    def bounded_connect():
+        with connect() as connection:
+            connection.set_progress_handler(over_budget, 1000)
+            yield connection
+
+    monkeypatch.setattr(db, "connect", bounded_connect)
+    assert db.claim(["sonarr", "radarr"], "current")["state"] == "processing"
 
 
 def test_outage_holds_new_jobs_without_erasing_catalog(catalog_library):

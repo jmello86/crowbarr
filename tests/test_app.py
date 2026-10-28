@@ -176,11 +176,14 @@ def test_private_files_are_never_left_exposed_when_chmod_is_refused(tmp_path, mo
     def refuse(*_args, **_kwargs):
         raise PermissionError(1, "Operation not permitted")
 
-    class Exposed:
-        st_mode = 0o100770
+    def exposed_stat(fd):
+        actual = real_fstat(fd)
+        # Preserve the complete stat result for pytest's output capture, which
+        # also uses fstat while this process-wide mock is installed.
+        return _os.stat_result((0o100770, *actual[1:]))
 
     monkeypatch.setattr(_os, "fchmod", refuse)
-    monkeypatch.setattr(_os, "fstat", lambda fd: Exposed() if fd else real_fstat(fd))
+    monkeypatch.setattr(_os, "fstat", exposed_stat)
     with pytest.raises(PermissionError):
         atomic_write(tmp_path / "settings.json", "{}", mode=0o600)
 

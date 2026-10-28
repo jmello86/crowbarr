@@ -507,8 +507,12 @@ class Database:
         scope, parameters = "", [now]
         if providers:
             marks = ",".join("?" for _ in providers)
+            # The correlated lookup must use the file path. A provider-only scan
+            # repeats the whole catalog for every pending job while holding the
+            # write lock, starving both the worker and library synchronization.
             scope = (
-                "AND EXISTS (SELECT 1 FROM managed_media m JOIN provider_sync s ON m.provider=s.provider "
+                "AND EXISTS (SELECT 1 FROM managed_media m INDEXED BY managed_path "
+                "JOIN provider_sync s ON m.provider=s.provider "
                 f"WHERE m.path=jobs.media AND m.provider IN ({marks}) AND s.healthy=1 "
                 + ("AND s.generation=? " if generation is not None else "")
                 + ") "
