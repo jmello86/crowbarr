@@ -124,6 +124,7 @@ class Settings(BaseModel):
     compute_type: str = "int8"
     cpu_threads: int = Field(default=2, ge=1, le=64)
     scan_seconds: int = Field(default=300, ge=10, le=86400)
+    sync_request_workers: int = Field(default=4, ge=1, le=8, strict=True)
     settle_seconds: int = Field(default=120, ge=0, le=86400)
     min_duration_minutes: int = Field(default=10, ge=0, le=600)
     subtitle_wait_minutes: int = Field(default=30, ge=0, le=10080)

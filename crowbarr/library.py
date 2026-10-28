@@ -252,7 +252,8 @@ def scan_arr(settings: Settings, db: Database, client_factory=ArrClient) -> int:
     # Sonarr filesystem pass holds fresh Radarr imports behind an unhealthy gate.
     for provider in settings.providers():
         try:
-            with client_factory(provider, getattr(settings, provider)) as client:
+            with client_factory(provider, getattr(settings, provider), workers=settings.sync_request_workers,
+                                discovery_fingerprint=settings.discovery_fingerprint()) as client:
                 files = client.catalog()
             db.replace_catalog(provider, [file.record() for file in files], settings.discovery_fingerprint())
         except Exception as error:

@@ -2,12 +2,26 @@
 
 from __future__ import annotations
 
+import logging
+import random
+import threading
+import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path, PureWindowsPath
 
 import httpx
 
 from .config import ArrConnection
+
+log = logging.getLogger("crowbarr")
+
+
+class CatalogCancelled(RuntimeError):
+    """Discovery stopped without authorizing a partial catalog replacement."""
 
 
 @dataclass(frozen=True)
@@ -27,6 +41,21 @@ class ManagedFile:
 
     def record(self) -> dict:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class CatalogItem:
+    """An authoritative item snapshot, never a placeholder for a failed request.
+
+    An unbound client has no full discovery fingerprint. Coordinators must supply
+    and compare that fingerprint before using a snapshot to authorize work.
+    """
+
+    provider: str
+    item_id: int
+    discovery_fingerprint: str | None
+    files: tuple[ManagedFile, ...]
+    outcome: str = "complete"
 
 
 def map_path(remote: str, connection: ArrConnection) -> Path:
@@ -61,18 +90,53 @@ def _remote_path(item: dict, file: dict) -> str:
     raise ValueError("Imported media has no file path in the API response")
 
 
+def _episode_groups(episodes, monitored_only):
+    groups, eligible = {}, set()
+    for episode in episodes:
+        if not isinstance(episode.get("hasFile"), bool):
+            raise ValueError("Episode is missing file-presence metadata")
+        if monitored_only and episode["hasFile"] and not isinstance(episode.get("monitored"), bool):
+            raise ValueError("Episode is missing monitoring metadata")
+        file_id = episode.get("episodeFileId")
+        if file_id is not None and (not isinstance(file_id, int) or isinstance(file_id, bool) or file_id < 0):
+            raise ValueError("Invalid episode file ID")
+        if episode["hasFile"] and not file_id:
+            raise ValueError("Imported episode has no file ID")
+        if file_id:
+            groups.setdefault(file_id, []).append(episode)
+            if episode.get("hasFile") and (episode.get("monitored") or not monitored_only):
+                eligible.add(file_id)
+    return groups, eligible
+
+
 class ArrClient:
-    def __init__(self, provider: str, connection: ArrConnection, transport=None):
+    def __init__(self, provider: str, connection: ArrConnection, transport=None, *, workers=4,
+                 discovery_fingerprint=None, cancel_event=None, progress=None,
+                 retry_wait=None, clock=time.time, jitter=random.random):
         if provider not in {"sonarr", "radarr"}:
             raise ValueError("Unknown arr service")
         if not connection.url or not connection.api_key:
             raise ValueError("Both service URL and API key are required for library sync")
-        self.provider, self.connection = provider, connection
+        if not isinstance(workers, int) or isinstance(workers, bool) or not 1 <= workers <= 8:
+            raise ValueError("Discovery workers must be between 1 and 8")
+        self.provider, self.connection = provider, connection.model_copy(deep=True)
+        self.discovery_fingerprint = discovery_fingerprint
+        self.workers, self.cancel_event, self.progress = workers, cancel_event, progress
+        self._retry_wait, self._clock, self._jitter = retry_wait, clock, jitter
+        self._abort, self._closed = threading.Event(), threading.Event()
+        self._request_slots = threading.BoundedSemaphore(workers)
+        self._iteration_lock, self._metrics_lock = threading.Lock(), threading.Lock()
+        self._callback_lock = threading.RLock()
+        self._pool = None
+        self._metrics = dict(requests=0, attempts=0, completed_items=0, submitted_items=0,
+                             pending_items=0, peak_pending_items=0, active_requests=0,
+                             peak_active_requests=0, in_flight_items=0, peak_in_flight_items=0)
         self.client = httpx.Client(
             timeout=20,
             follow_redirects=False,
             trust_env=False,
-            headers={"X-Api-Key": connection.api_key},
+            headers={"X-Api-Key": self.connection.api_key},
+            limits=httpx.Limits(max_connections=workers, max_keepalive_connections=workers),
             transport=transport,
         )
 
@@ -80,11 +144,107 @@ class ArrClient:
         return self
 
     def __exit__(self, *args):
+        self.close()
+
+    def close(self):
+        self._closed.set()
+        self._abort.set()
+        if self._pool is not None:
+            self._pool.shutdown(wait=True, cancel_futures=True)
         self.client.close()
 
+    @property
+    def metrics(self):
+        with self._metrics_lock:
+            return {"provider": self.provider, **self._metrics}
+
+    def _count(self, **deltas):
+        with self._metrics_lock:
+            for key, delta in deltas.items():
+                self._metrics[key] += delta
+            for key in ("active_requests", "pending_items", "in_flight_items"):
+                self._metrics["peak_" + key] = max(self._metrics["peak_" + key], self._metrics[key])
+        if self.progress:
+            # Observers receive only aggregate copies, never configuration or URLs.
+            with self._callback_lock:
+                if self.progress is None:
+                    return
+                try:
+                    self.progress(self.metrics)
+                except Exception:
+                    self.progress = None
+                    log.warning("Discovery progress observer failed")
+
+    def _check_cancelled(self):
+        if self._closed.is_set() or self._abort.is_set() or (self.cancel_event and self.cancel_event.is_set()):
+            raise CatalogCancelled("Library discovery cancelled")
+
+    def _get(self, endpoint, **params):
+        self._check_cancelled()
+        self._count(requests=1)
+        for attempt in range(3):
+            response = None
+            try:
+                response = self._attempt(endpoint, params)
+            except httpx.TransportError:
+                self._check_cancelled()
+                if attempt == 2:
+                    raise
+            else:
+                self._check_cancelled()
+                if response.status_code not in {429, 502, 503, 504} or attempt == 2:
+                    response.raise_for_status()
+                    return response
+            delay = self._retry_delay(response, attempt)
+            if response is not None:
+                response.close()
+            self._wait_for_retry(delay)
+
+    def _attempt(self, endpoint, params):
+        while not self._request_slots.acquire(timeout=0.1):
+            self._check_cancelled()
+        try:
+            self._check_cancelled()
+            self._count(attempts=1, active_requests=1)
+            try:
+                self._check_cancelled()
+                response = self.client.get(self.connection.url + "/api/v3/" + endpoint, params=params)
+            finally:
+                self._count(active_requests=-1)
+        finally:
+            self._request_slots.release()
+        self._check_cancelled()
+        return response
+
+    def _retry_delay(self, response, attempt):
+        if response is not None:
+            value = response.headers.get("Retry-After", "").strip()
+            try:
+                if value.isdecimal():
+                    delay = int(value)
+                else:
+                    date = parsedate_to_datetime(value)
+                    if date.tzinfo is None:
+                        date = date.replace(tzinfo=timezone.utc)
+                    delay = date.timestamp() - self._clock()
+                return max(1, min(60, delay))
+            except (ValueError, TypeError, OverflowError):
+                pass
+        return 2**attempt + max(0, min(1, self._jitter()))
+
+    def _wait_for_retry(self, delay):
+        self._check_cancelled()
+        if self._retry_wait is not None:
+            self._retry_wait(delay)
+        else:
+            deadline = time.monotonic() + delay
+            while time.monotonic() < deadline:
+                self._check_cancelled()
+                self._abort.wait(min(0.1, max(0, deadline - time.monotonic())))
+        self._check_cancelled()
+
     def get_list(self, endpoint: str, **params) -> list[dict]:
-        response = self.client.get(self.connection.url + "/api/v3/" + endpoint, params=params)
-        response.raise_for_status()
+        response = self._get(endpoint, **params)
         data = response.json()
         if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
             raise ValueError("Unexpected arr API response; expected a list of records")
@@ -94,34 +254,138 @@ class ArrClient:
         """Fetch only the imported item; never trust webhook paths or monitoring flags."""
         kind = "series" if self.provider == "sonarr" else "movie"
         item_id = int(payload.get(kind, {}).get("id", 0))
-        if item_id <= 0:
-            raise ValueError("Import event needs a managed item ID")
-        response = self.client.get(self.connection.url + f"/api/v3/{kind}/{item_id}")
-        response.raise_for_status()
-        item = response.json()
-        if self.connection.monitored_only and not item.get("monitored"):
-            return []
+        result = self.catalog_item(item_id)
         if self.provider == "radarr":
-            return [self._file(item, item["movieFile"])] if item.get("hasFile") else []
+            return list(result.files)
         file_id = int(payload.get("episodeFile", {}).get("id", 0))
-        files = self.get_list("episodefile", seriesId=item_id)
-        episodes = self.get_list("episode", seriesId=item_id)
-        eligible = {
-            e.get("episodeFileId")
-            for e in episodes
-            if e.get("hasFile") and (e.get("monitored") or not self.connection.monitored_only)
-        }
-        return [self._file(item, f, episodes) for f in files if f["id"] in eligible and f["id"] == file_id]
+        return [file for file in result.files if file.file_id == file_id]
 
     def catalog(self) -> list[ManagedFile]:
-        return self._sonarr() if self.provider == "sonarr" else self._radarr()
+        files = sorted((file for item in self.iter_catalog_items() for file in item.files),
+                       key=lambda file: (file.provider, file.item_id, file.file_id))
+        self._check_cancelled()
+        return files
+
+    def iter_catalog_items(self):
+        if not self._iteration_lock.acquire(blocking=False):
+            raise RuntimeError("Only one catalog iterator may run per client")
+        pending, pool = set(), None
+        try:
+            self._check_cancelled()
+            endpoint = "series" if self.provider == "sonarr" else "movie"
+            inventory = iter(self.get_list(endpoint))
+            seen = set()
+            pool = self._pool = ThreadPoolExecutor(max_workers=self.workers, thread_name_prefix="crowbarr-arr")
+
+            def fill():
+                while len(pending) < 2 * self.workers:
+                    self._check_cancelled()
+                    item = next(inventory, None)
+                    if item is None:
+                        break
+                    item_id = self._positive_id(item.get("id"))
+                    if item_id in seen:
+                        raise ValueError("Duplicate manager item ID in inventory")
+                    seen.add(item_id)
+                    pending.add(pool.submit(self._catalog_task, item))
+                    self._count(submitted_items=1, pending_items=1)
+
+            fill()
+            while pending:
+                self._check_cancelled()
+                done, _ = wait(pending, timeout=0.1, return_when=FIRST_COMPLETED)
+                for future in done:
+                    self._check_cancelled()
+                    pending.remove(future)
+                    self._count(pending_items=-1)
+                    result = future.result()
+                    self._check_cancelled()
+                    yield result
+                fill()
+            self._check_cancelled()
+        finally:
+            self._abort.set()
+            if pool is not None:
+                pool.shutdown(wait=True, cancel_futures=True)
+            self._pool = None
+            self._count(pending_items=-len(pending))
+            if not self._closed.is_set():
+                self._abort.clear()
+            self._iteration_lock.release()
+
+    @contextmanager
+    def _item_work(self):
+        self._check_cancelled()
+        self._count(in_flight_items=1)
+        try:
+            yield
+            self._check_cancelled()
+            self._count(completed_items=1)
+            self._check_cancelled()
+        finally:
+            self._count(in_flight_items=-1)
+
+    def _catalog_task(self, item):
+        with self._item_work():
+            return self._catalog_record(item)
+
+    @staticmethod
+    def _positive_id(value):
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ValueError("Manager resource needs a positive integer ID")
+        return value
+
+    def catalog_item(self, item_id: int) -> CatalogItem:
+        item_id = self._positive_id(item_id)
+        kind = "series" if self.provider == "sonarr" else "movie"
+        with self._item_work():
+            try:
+                response = self._get(f"{kind}/{item_id}")
+            except httpx.HTTPStatusError as error:
+                if error.response.status_code == 404:
+                    return CatalogItem(self.provider, item_id, self.discovery_fingerprint, (), "removed")
+                raise
+            item = response.json()
+            if not isinstance(item, dict) or self._positive_id(item.get("id")) != item_id:
+                raise ValueError("Unexpected manager item response")
+            return self._catalog_record(item)
+
+    def _catalog_record(self, item: dict) -> CatalogItem:
+        item_id = self._positive_id(item.get("id"))
+        if self.connection.monitored_only:
+            if not isinstance(item.get("monitored"), bool):
+                raise ValueError("Manager item is missing monitoring metadata")
+            if not item["monitored"]:
+                return CatalogItem(self.provider, item_id, self.discovery_fingerprint, ())
+        if self.provider == "radarr":
+            if not isinstance(item.get("hasFile"), bool):
+                raise ValueError("Radarr item is missing file-presence metadata")
+            if not item["hasFile"]:
+                return CatalogItem(self.provider, item_id, self.discovery_fingerprint, ())
+            file = item.get("movieFile")
+            if not isinstance(file, dict):
+                raise ValueError("Radarr reports an imported movie without movieFile metadata")
+            self._positive_id(file.get("id"))
+            files = (self._file(item, file),)
+        else:
+            source_files = self.get_list("episodefile", seriesId=item_id)
+            episodes = self.get_list("episode", seriesId=item_id) if source_files else []
+            groups, eligible_ids = _episode_groups(episodes, self.connection.monitored_only)
+            files, seen = [], set()
+            for file in source_files:
+                file_id = self._positive_id(file.get("id"))
+                if file_id in seen or (self.connection.monitored_only and file_id not in eligible_ids):
+                    continue
+                seen.add(file_id)
+                files.append(self._file(item, file, groups.get(file_id, [])))
+            files = tuple(files)
+        return CatalogItem(self.provider, item_id, self.discovery_fingerprint, files)
 
     def _file(self, item: dict, file: dict, episodes: list[dict] | None = None) -> ManagedFile:
         from .catalog import language_codes
 
         remote = _remote_path(item, file)
-        matched = sorted([e for e in episodes or [] if e.get("episodeFileId") == file["id"]],
-                         key=lambda e: e.get("episodeNumber", 0))
+        matched = sorted(episodes or [], key=lambda e: e.get("episodeNumber", 0))
         info = file.get("mediaInfo") or {}
         return ManagedFile(
             self.provider,
@@ -137,40 +401,3 @@ class ArrClient:
             any(i.get("coverType") == "poster" for i in item.get("images", [])),
             item.get("year"),
         )
-
-    def _radarr(self) -> list[ManagedFile]:
-        result = []
-        for movie in self.get_list("movie"):
-            if self.connection.monitored_only and not movie.get("monitored", False):
-                continue
-            if not movie.get("hasFile", False):
-                continue
-            file = movie.get("movieFile")
-            if not isinstance(file, dict) or not file.get("id"):
-                raise ValueError("Radarr reports an imported movie without movieFile metadata")
-            result.append(self._file(movie, file))
-        return result
-
-    def _sonarr(self) -> list[ManagedFile]:
-        result = []
-        for series in self.get_list("series"):
-            if self.connection.monitored_only and not series.get("monitored", False):
-                continue
-            files = self.get_list("episodefile", seriesId=series["id"])
-            episodes = self.get_list("episode", seriesId=series["id"]) if files else []
-            eligible_ids = None
-            if self.connection.monitored_only and files:
-                eligible_ids = {
-                    e["episodeFileId"]
-                    for e in episodes
-                    if e.get("monitored", False) and e.get("hasFile", False) and e.get("episodeFileId")
-                }
-            # Multi-episode releases are represented once by episode-file ID.
-            seen = set()
-            for file in files:
-                file_id = file["id"]
-                if file_id in seen or (eligible_ids is not None and file_id not in eligible_ids):
-                    continue
-                seen.add(file_id)
-                result.append(self._file(series, file, episodes))
-        return result

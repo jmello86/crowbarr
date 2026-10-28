@@ -12,14 +12,14 @@ Do not change database sync publication or deletion semantics yet. Module 01 mus
 
 ## Tasks
 
-- [ ] **02.1 — Make episode association linear.** Group episode resources by
+- [x] **02.1 — Make episode association linear.** Group episode resources by
   `episodeFileId` once per series. Pass the group into `_file()` rather than filtering
   every episode for each video. Preserve episode sorting, merged titles, season,
   monitored-only checks, language normalization, and multi-episode deduplication.
   Test 1,000 files with several episodes each using iteration/lookup counts; require
   linear grouping work and exact equivalence with existing fixture output.
 
-- [ ] **02.2 — Extract complete per-item fetching.** Add `catalog_item(item_id)` and
+- [x] **02.2 — Extract complete per-item fetching.** Add `catalog_item(item_id)` and
   `iter_catalog_items()` from the shared contract. An item fetch validates the current
   series/movie record and retrieves all file/episode information needed for monitoring.
   Keep `catalog()` returning its existing list; initially it collects the iterator.
@@ -30,7 +30,7 @@ Do not change database sync publication or deletion semantics yet. Module 01 mus
   series-detail request per item solely for refactoring. Targeted candidate validation
   must fetch current item truth. Test request counts for both paths separately.
 
-- [ ] **02.3 — Add a bounded request pool.** Introduce validated
+- [x] **02.3 — Add a bounded request pool.** Introduce validated
   `sync_request_workers` (default 4, range 1–8), excluded from processing fingerprints.
   Bound active requests and queued futures: submit at most twice the worker count of
   items, consume completed items, then replenish. Do not submit thousands of futures
@@ -38,7 +38,7 @@ Do not change database sync publication or deletion semantics yet. Module 01 mus
   instance across workers. Preserve `trust_env=False`, authentication, timeouts, and
   redirect refusal. Test peak active requests and client closure after failure/cancel.
 
-- [ ] **02.4 — Bound retries and cancellation.** Retry only GET transport errors and
+- [x] **02.4 — Bound retries and cancellation.** Retry only GET transport errors and
   429/502/503/504, at most three total attempts. Respect a valid Retry-After within a
   1–60 second bound; otherwise exponential backoff with injectable jitter/clock.
   Do not retry 401/403, definitive 404, malformed JSON, or invalid resource shapes as
@@ -46,7 +46,7 @@ Do not change database sync publication or deletion semantics yet. Module 01 mus
   an in-flight request may take its existing bounded timeout to return. Unit tests use
   fake wait functions and never sleep through real retry delays.
 
-- [ ] **02.5 — Preserve determinism and report counters.** The iterator may complete
+- [x] **02.5 — Preserve determinism and report counters.** The iterator may complete
   items out of order; `catalog()` sorts by stable provider/item/file identity to retain
   deterministic tests and downstream processing. Add request/attempt/completed-item
   counters through an optional callback, without exposing API keys or full URLs.

@@ -110,7 +110,8 @@ def test_mapping_symlink_cannot_escape(tmp_path):
 
 def test_api_failure_is_not_an_empty_catalog():
     transport = httpx.MockTransport(lambda _: httpx.Response(503))
-    with ArrClient("radarr", ArrConnection(url="http://arr", api_key="private"), transport) as adapter:
+    with ArrClient("radarr", ArrConnection(url="http://arr", api_key="private"), transport,
+                   retry_wait=lambda _: None) as adapter:
         with pytest.raises(httpx.HTTPStatusError):
             adapter.catalog()
 
@@ -119,7 +120,7 @@ class Catalog:
     files = []
     fail = False
 
-    def __init__(self, *args):
+    def __init__(self, *args, **kwargs):
         pass
 
     def __enter__(self):

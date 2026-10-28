@@ -90,6 +90,10 @@ facade. No full `catalog.rows()` call on an idle claim or single-file API operat
   the item and its monitored episode/file state. `event_files()` uses this shared path.
 - A per-item result includes provider, item ID, discovery fingerprint, authoritative
   file list, and a complete/removed outcome. Exceptions never masquerade as empty results.
+  Implemented as `arr.CatalogItem` in Module 02. An unbound standalone adapter reports
+  fingerprint None; coordinators must supply the full Settings discovery fingerprint
+  and reject unbound snapshots for freshness/authorization. Request metrics describe
+  fetching, not successful database application.
 - Module 03: NEW `ScanContext` is scoped to one scan/batch. It caches resolved allowed
   roots, directory entries, and stat hints, and tracks operation counts. Existing callers
   without a context keep the exact current behavior.
