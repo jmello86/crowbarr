@@ -438,8 +438,10 @@ def create_app(directory: Path | None = None, background: bool = True) -> FastAP
 
     @app.post("/api/jobs/{job_id}/retry", dependencies=[Depends(authenticate)])
     def retry(job_id: int):
-        db.refresh_library_policy()
         job = db.get(job_id)
+        if job:
+            db.refresh_library_policy(paths=[job["media"]])
+            job = db.get(job_id)
         if job and job.get("library_blocked"):
             raise HTTPException(409, "This file is skipped. Choose Always include in Library before retrying.")
         if not db.retry(job_id):
@@ -462,11 +464,8 @@ def create_app(directory: Path | None = None, background: bool = True) -> FastAP
         current = store.get()
         if not media.is_absolute() or not db.eligible(str(media), current.providers(), healthy=False):
             raise HTTPException(422, "Select an absolute path from the managed library")
-        from .catalog import decision, preferences, rows
-
         with db.connect() as connection:
-            record = next((r for r in rows(connection) if r["path"] == str(media)), None)
-            if record and decision(record, *preferences(connection))["skipped"]:
+            if db.check_current_policy(connection, str(media))["skipped"]:
                 raise HTTPException(409, "This file is skipped. Choose Always include in Library to process it.")
         try:
             queue_media(media, current, db, time.time(), origin="manual")
@@ -542,7 +541,7 @@ def create_app(directory: Path | None = None, background: bool = True) -> FastAP
 
     @app.put("/api/library/preferences", dependencies=[Depends(authenticate)])
     def library_preference(payload: dict):
-        from .catalog import file_targets, refresh_policy, rows
+        from .policy import check, rule_targets
 
         scope, target, choice = payload.get("scope"), payload.get("target"), payload.get("decision")
         with db.connect() as connection:
@@ -555,18 +554,23 @@ def create_app(directory: Path | None = None, background: bool = True) -> FastAP
             else:
                 if scope not in {"title", "season", "file"} or choice not in {"skip", "include", "auto"}:
                     raise HTTPException(422, "Choose a title, season, or file preference")
-                records = rows(connection)
-                targets = {r["path"] if scope == "file" else r["key"] if scope == "title" else
-                           f"{r['key']}:{r['season']}" for r in records if scope != "season" or r["season"] is not None}
-                if not isinstance(target, str) or target not in targets:
-                    raise HTTPException(404, "Library item is no longer available; sync and try again")
-                affected = file_targets(next(r for r in records if r["path"] == target)) if scope == "file" else [target]
+                try:
+                    affected = rule_targets(connection, scope, target)
+                except LookupError:
+                    raise HTTPException(404, "Library item is no longer available; sync and try again") from None
                 for rule_target in affected:
                     if choice == "auto":
                         connection.execute("DELETE FROM library_rules WHERE scope=? AND target=?", (scope, rule_target))
                     else:
                         connection.execute("INSERT OR REPLACE INTO library_rules VALUES (?,?,?)", (scope, rule_target, choice))
-            refresh_policy(connection)
+            # Fence the one active worker immediately, independently of cached batches.
+            active = connection.execute("SELECT media FROM jobs WHERE state='processing'").fetchone()
+            if active:
+                check(connection, active[0], apply=True)
+            if scope == "file":
+                check(connection, target, apply=True)
+        if scope != "file":
+            db.refresh_policy_batch()
         return {"message": "Library preference saved. More specific file or season overrides still apply."}
 
     @app.get("/api/library/artwork/{provider}/{item_id}", dependencies=[Depends(authenticate)])
@@ -716,6 +720,7 @@ def create_app(directory: Path | None = None, background: bool = True) -> FastAP
         import hashlib
         import json
 
+        from .db import StaleJob
         from .media import probe
         from .processor import publish_candidate, review_candidate_path
         from .subtitles import parse_srt, validate_cues
@@ -743,12 +748,15 @@ def create_app(directory: Path | None = None, background: bool = True) -> FastAP
                 raise HTTPException(409, "Candidate has invalid timestamps; repair before approval")
             report["manual_approval"] = True
             result = publish_candidate(job, store.get(), store.directory, db, rendered, report)
-            db.update(job_id, **result)
+            if not db.update(job_id, expected_generation=job["generation"], **result):
+                raise StaleJob("Job request changed after approval")
             return {
                 "message": "Candidate published"
                 if result["state"] == "completed"
                 else result.get("error", "Publication did not complete")
             }
+        except StaleJob:
+            raise HTTPException(409, "Job or library preference changed; retry before approval") from None
         except (ValueError, OSError):
             raise HTTPException(409, "Candidate or media is unavailable") from None
 
@@ -815,7 +823,7 @@ def create_app(directory: Path | None = None, background: bool = True) -> FastAP
                     db.save_library_metadata(connection, [file.record() for file in files])
                 for file in files:
                     queue_media(Path(file.path), current, db, time.time(), origin="import")
-                db.refresh_library_policy()
+                db.refresh_library_policy(paths=[file.path for file in files])
                 return {"message": f"Queued {len(files)} imported files"}
             path = payload.get("path") or payload.get("video_path")
             if path:

@@ -217,6 +217,8 @@ class Service:
         context = multiprocessing.get_context("spawn")
         while not self.stop_event.wait(1):
             try:
+                # Metadata maintenance continues while inference is paused or gated.
+                self.db.refresh_policy_batch()
                 settings = self.store.get()
                 if time.monotonic() - self.last_resource_check > 10:
                     self.resources = resource_snapshot()

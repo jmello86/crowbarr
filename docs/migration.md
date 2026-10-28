@@ -1,5 +1,28 @@
 # Migration and backup
 
+## Upcoming policy projection migration (unreleased)
+
+The Module 01 implementation adds cached policy revisions, a dirty-path queue, and a
+durable scan cursor. Its schema changes are transactional and additive. Existing
+queue states, history, result signatures, and audit/recognition policy versions are
+preserved. The first open schedules a bounded rebuild instead of recalculating every
+library rule during startup or each job claim.
+
+After upgrading, cached library states may settle over several background batches
+(up to 200 files per batch). Claims, retry/manual requests, and publication still
+validate the current policy for the individual file. Pausing inference does not pause
+policy maintenance. A newly excluded active job is cancelled immediately when its
+preference is saved through the dashboard/API. Existing published subtitle files are
+not removed by this migration.
+
+Use the complete stopped-service backup procedure below before upgrading. For rollback,
+save the new app data, then restore the pre-upgrade app data and its matching old image;
+do not assume that downgrading the image alone reverses the new schema/triggers. Test
+the rollback with a disposable copy first. This implementation has not been deployed
+by the development checks described in the implementation ledger.
+
+## Existing installation data
+
 Keep the existing data and install the published application. Crowbarr stores its
 settings, login credentials, API key, job state, reports, model caches and transcript
 checkpoints in its data directory (`/config` in Docker, `/var/lib/crowbarr` by default

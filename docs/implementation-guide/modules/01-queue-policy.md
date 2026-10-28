@@ -16,20 +16,20 @@ is allowed if it reduces duplication. Do not modify inference, audit thresholds,
 
 ## Tasks, in order
 
-- [ ] **01.1 — Characterize policy parity.** Add fixtures for title/season/file overrides,
+- [x] **01.1 — Characterize policy parity.** Add fixtures for title/season/file overrides,
   shared episode files, untagged/multiple audio languages, folder-only jobs, and an
   unmanaged old job. Compare current `decision()` outputs, queue order, and publication
   refusal. Add a test proving idle `claim()` currently calls full `catalog.rows()`.
   That final test must fail after changing its expectation to zero full-catalog calls.
 
-- [ ] **01.2 — Add policy revision and dirty tracking.** Implement the contract's revision,
+- [x] **01.2 — Add policy revision and dirty tracking.** Implement the contract's revision,
   per-job projected revision, coalesced dirty-path work, and global cursor. Existing
   databases start dirty and retain all states/history. Make schema creation and upgrade
   idempotent; rollback all new schema/data on an injected migration failure. Write an
   index for the dirty cursor/lookup. Do not eagerly backfill the entire library during
   every Database construction. Test reopening both old and new fixture databases twice.
 
-- [ ] **01.3 — Implement bounded projection.** Add `mark_policy_dirty()` and
+- [x] **01.3 — Implement bounded projection.** Add `mark_policy_dirty()` and
   `refresh_policy_batch(limit=200)`. Read only the bounded media identities and required
   metadata, compute using `decision()`, then CAS-apply the same revision in a short write
   transaction. Metadata used by policy must have a revision too; do not publish a
@@ -37,7 +37,7 @@ is allowed if it reduces duplication. Do not modify inference, audit thresholds,
   cancellation of active excluded work, cursor completion, coalescing, and a rule change
   halfway through a batch. Do not use the heavyweight UI-oriented `rows()` loader.
 
-- [ ] **01.4 — Make claim and publication authoritative for one file.** Remove full
+- [x] **01.4 — Make claim and publication authoritative for one file.** Remove full
   `refresh_policy()` from `claim()`. Examine at most 200 queued candidates per claim
   call, validate each candidate's current policy under the transaction, and either claim
   one or transition newly excluded work appropriately. Preserve the 0.4.14 indexed
@@ -45,7 +45,7 @@ is allowed if it reduces duplication. Do not modify inference, audit thresholds,
   Add the same current-policy check at publication/manual approval so a dirty cached
   allow cannot authorize a write. Test a rule change at the publication boundary.
 
-- [ ] **01.5 — Wire every mutation.** Rule writes advance revision atomically; catalog
+- [x] **01.5 — Wire every mutation.** Rule writes advance revision atomically; catalog
   changes and `cache_audio()` mark affected paths dirty. Integrate bounded projection
   work into the service, including while paused (pause blocks inference, not metadata
   maintenance). Adapt existing `refresh_library_policy()` callers without silently
@@ -54,7 +54,7 @@ is allowed if it reduces duplication. Do not modify inference, audit thresholds,
   identities. Preserve synchronous API guarantees where they affect safety; eventual
   background projection must never mean eventual protection against publication.
 
-- [ ] **01.6 — Measure and document.** Retain the existing 0.4.14 SQL regression. Add a
+- [x] **01.6 — Measure and document.** Retain the existing 0.4.14 SQL regression. Add a
   small generated catalog fixture with 3,000 items/500 jobs and operation counters.
   Report SQL statements, policy records inspected, and full loader calls for an idle
   claim and a single-file mutation. Record migration/rollback behavior in the ledger.

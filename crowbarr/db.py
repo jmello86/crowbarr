@@ -136,6 +136,9 @@ class Database:
             )
             if "generation" not in {row[1] for row in db.execute("PRAGMA table_info(provider_sync)")}:
                 db.execute("ALTER TABLE provider_sync ADD COLUMN generation TEXT NOT NULL DEFAULT ''")
+            from .policy import migrate
+
+            migrate(db)
 
     @contextmanager
     def connect(self):
@@ -203,6 +206,12 @@ class Database:
         now = time.time()
         state = "waiting" if ready > now else "queued"
         with self.connect() as db:
+            from .policy import check
+
+            def finish(identifier):
+                check(db, media, apply=True)
+                return identifier
+
             row = db.execute("SELECT * FROM jobs WHERE media=?", (media,)).fetchone()
             if row is None:
                 db.execute(
@@ -210,7 +219,7 @@ class Database:
                     " VALUES (?,?,?,?,?,?,?,?,?)",
                     (media, signature, source, state, now, now, ready, origin, priority),
                 )
-                return db.execute("SELECT id FROM jobs WHERE media=?", (media,)).fetchone()[0]
+                return finish(db.execute("SELECT id FROM jobs WHERE media=?", (media,)).fetchone()[0])
 
             if row["signature"] == signature:
                 # Nothing about this file changed. A settled verdict stands, but work
@@ -221,13 +230,13 @@ class Database:
                         "cancel_requested=0,origin=?,priority=? WHERE id=?",
                         (state, ready, now, origin, priority, row["id"]),
                     )
-                    return row["id"]
+                    return finish(row["id"])
                 if row["state"] in pending and priority > row["priority"]:
                     db.execute(
                         "UPDATE jobs SET priority=?,origin=?,updated=? WHERE id=?",
                         (priority, origin, now, row["id"]),
                     )
-                return row["id"]
+                return finish(row["id"])
 
             # The media or its subtitles changed, so the previous verdict no longer
             # applies. Keep a waiting user's urgency, and revisit unresolved work sooner
@@ -246,7 +255,7 @@ class Database:
                 "generation=generation+1 WHERE id=?",
                 (signature, source, state, ready, now, now, origin, priority, row["id"]),
             )
-            return row["id"]
+            return finish(row["id"])
 
     def restore_results(self, candidates: list[tuple[str, str, str | None]]) -> set[str]:
         """Restore exact prior verdicts together before a scan changes queue totals."""
@@ -430,15 +439,50 @@ class Database:
             [(r["path"], json.dumps({k: r[k] for k in fields if k in r})) for r in records],
         )
 
-    def refresh_library_policy(self) -> None:
-        from .catalog import refresh_policy
+    def mark_policy_dirty(self, paths=None) -> int:
+        from .policy import mark_dirty
+
+        if paths is None:
+            with self.connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                return mark_dirty(connection)
+        paths = list(dict.fromkeys(paths))
+        for offset in range(0, len(paths), 200):
+            with self.connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                mark_dirty(connection, paths[offset:offset + 200])
+        from .policy import revision
 
         with self.connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            refresh_policy(connection)
+            return revision(connection)
+
+    def refresh_policy_batch(self, limit: int = 200) -> int:
+        from .policy import refresh_batch
+
+        return refresh_batch(self, limit)
+
+    def check_current_policy(self, connection, media: str) -> dict:
+        from .policy import check
+
+        return check(connection, media)
+
+    def refresh_library_policy(self, paths=None) -> None:
+        """Project explicit paths in bounded commits, or schedule one global batch."""
+        if paths is None:
+            self.mark_policy_dirty()
+            self.refresh_policy_batch()
+        else:
+            from .policy import check
+
+            paths = list(dict.fromkeys(paths))
+            for offset in range(0, len(paths), 200):
+                with self.connect() as connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    for path in paths[offset:offset + 200]:
+                        check(connection, path, apply=True)
 
     def cache_audio(self, media: str, metadata: dict) -> dict:
-        from .catalog import decision, identity, language_codes, preferences
+        from .catalog import language_codes
         from .media import audio_candidates
 
         stat = Path(media).stat()
@@ -446,12 +490,7 @@ class Database:
         with self.connect() as connection:
             connection.execute("INSERT OR REPLACE INTO audio_metadata VALUES (?,?,?)",
                                (media, f"{stat.st_size}:{stat.st_mtime_ns}", json.dumps(languages)))
-            row = connection.execute("SELECT * FROM managed_media WHERE path=? LIMIT 1", (media,)).fetchone()
-            saved = connection.execute("SELECT metadata FROM library_metadata WHERE path=?", (media,)).fetchone()
-            record = identity({**(dict(row) if row else {"path": media}),
-                               **(json.loads(saved[0]) if saved else {})})
-            record["audio_languages"] = languages
-            return decision(record, *preferences(connection))
+            return self.check_current_policy(connection, media)
 
     def sync_failed(self, provider: str, error: str) -> None:
         with self.connect() as db:
@@ -526,22 +565,23 @@ class Database:
             try:
                 with self.connect() as db:
                     db.execute("BEGIN IMMEDIATE")
-                    from .catalog import refresh_policy
+                    from .policy import check
 
-                    refresh_policy(db)
                     if db.execute("SELECT 1 FROM jobs WHERE state='processing'").fetchone():
                         return None
-                    row = db.execute(
-                        "SELECT * FROM jobs WHERE state IN ('waiting','queued','retry') AND ready<=? "
+                    candidates = db.execute(
+                        "SELECT id,media FROM jobs WHERE state IN ('waiting','queued','retry') AND ready<=? "
                         + scope
                         # `ready` gates eligibility only. Ordering by it would let the Bazarr
                         # wait permanently demote media that arrived without a subtitle behind
                         # every file that already had one, so order by arrival instead.
                         + f"ORDER BY (priority + MIN(120, CAST(({now}-created)/3600 AS INTEGER))) DESC,"
-                        "CASE WHEN origin='backlog' THEN library_order ELSE '' END,created,id LIMIT 1",
+                        "CASE WHEN origin='backlog' THEN library_order ELSE '' END,created,id LIMIT 200",
                         parameters,
-                    ).fetchone()
-                    if not row:
+                    ).fetchall()
+                    row = next((candidate for candidate in candidates
+                                if not check(db, candidate["media"], apply=True)["skipped"]), None)
+                    if row is None:
                         return None
                     db.execute(
                         "UPDATE jobs SET state='processing',stage='Preparing audio',attempts=attempts+1,"

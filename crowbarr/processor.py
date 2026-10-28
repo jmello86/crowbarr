@@ -960,6 +960,8 @@ def review_candidate_path(directory: Path, job: dict) -> Path:
 
 
 def publish_candidate(job, settings, directory, db, rendered, report):
+    from .db import StaleJob
+
     media = Path(job["media"])
     # Recheck the input immediately before publishing. Never overwrite the provider's subtitle.
     if not current(job, settings):
@@ -968,6 +970,9 @@ def publish_candidate(job, settings, directory, db, rendered, report):
             "error": "Inputs changed while processing",
             "report": json.dumps(report),
         }
+    with db.connect() as connection:
+        if db.check_current_policy(connection, str(media))["skipped"]:
+            raise StaleJob("Library preference changed before publication")
     output = media.with_name(f"{media.stem}.crowbarr.{settings.language}.srt")
     if output.is_symlink():
         raise ReviewRequired("Output path is a symbolic link; refusing to replace it")
@@ -981,17 +986,18 @@ def publish_candidate(job, settings, directory, db, rendered, report):
         atomic_write(backup, output.read_text(encoding="utf-8"))
     # Journal intended content before the atomic rename so a crash cannot orphan a valid output.
     db.register_artifact(str(media), str(output), report["output_sha256"], job["id"])
-    db.update(job["id"], stage="Publishing subtitles", output=str(output), report=json.dumps(report))
+    if not db.update(job["id"], expected_generation=job["generation"], stage="Publishing subtitles",
+                     output=str(output), report=json.dumps(report)):
+        raise StaleJob("Job request changed before publication")
     # Serialize the publication boundary with library skip decisions. The worker
     # guard rechecks its generation and preference while holding this transaction.
     with db.connect() as connection:
         if db.worker_job is None:
             connection.execute("BEGIN IMMEDIATE")
-        latest = connection.execute("SELECT library_blocked FROM jobs WHERE id=?", (job["id"],)).fetchone()
-        if latest and latest[0]:
-            from .db import StaleJob
-
-            raise StaleJob("Library preference changed before publication")
+        latest = connection.execute("SELECT generation FROM jobs WHERE id=?", (job["id"],)).fetchone()
+        if (not latest or latest[0] != job["generation"]
+                or db.check_current_policy(connection, str(media))["skipped"]):
+            raise StaleJob("Job or library preference changed before publication")
         atomic_write(output, rendered, mode=0o644)
     if not current(job, settings):
         if output.exists() and hashlib.sha256(output.read_bytes()).hexdigest() == report["output_sha256"]:
