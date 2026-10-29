@@ -5,8 +5,8 @@ No implementation module is complete merely because this guide exists.
 
 | Module | State | Last completed task | Evidence / next action |
 | --- | --- | --- | --- |
-| 01 | Complete | 01.6 | 377 passed, 6 skipped; Ruff/wheel pass. Included in 0.4.15 release candidate. |
-| 02 | Complete | 02.5 | 449 passed, 6 skipped; Ruff/wheel pass. Included in 0.4.15 release candidate. |
+| 01 | Complete | 01.6 | 377 passed, 6 skipped; Ruff/wheel pass. Published/deployed in 0.4.15. |
+| 02 | Complete | 02.5 | 449 passed, 6 skipped; Ruff/wheel pass. Published/deployed in 0.4.15. |
 | 03 | Not started | — | Ready for 03.1; Module 02 exit gate passed. |
 | 04 | Not started | — | Requires 03 exit gate. |
 | 05 | Not started | — | Requires 04 exit gate. |
@@ -235,7 +235,7 @@ No implementation module is complete merely because this guide exists.
   paths/settings when changing images. Full system rollback still follows `docs/migration.md`.
 - Next module: **03 — Filesystem scan caching**, task **03.1** (ScanContext and operation counters).
 
-## 0.4.15 release candidate
+## 0.4.15 release and live verification
 
 - Includes completed Modules 01/02 and the separately requested Intel GPU telemetry
   and sync-status fixes. Module 03 remains unstarted.
@@ -249,9 +249,25 @@ No implementation module is complete merely because this guide exists.
 - Regression/full-suite evidence: **463 passed, 6 skipped** in 120.91 seconds on
   Python 3.12. Ruff and the 0.4.15 wheel build pass. JavaScript syntax and three
   system-strip render cases pass (Intel cached memory, unknown free memory, checking).
-- Physical Intel Arc GPU access was verified on the existing installation. Release
-  publication and the stopped-service backup/deployment still require verification.
-  The native browser tool stalled; visual verification is not yet complete.
+- Published source: `52a794d79db6366888becea1362670385a43912e`.
+  [Intel image workflow](https://github.com/jmello86/crowbarr/actions/runs/40972717123)
+  passed all gates: Python 3.11/3.12/3.13 each **468 passed, 1 skipped**, installed
+  dependency check, real CPU speech recognition/spawned processing, and server health
+  as the image user. Intel channel promotion succeeded after the immutable image push.
+- Deployed channel digest:
+  `sha256:7855b48e6573aba500eae9b1b7b605da744d86f6bd56deb7662db8feee531114`.
+  Container health and `/health` report 0.4.15. Configuration parity was checked before
+  stopping the original; a complete stopped-service app-data ZFS snapshot, old image,
+  and stopped old container were retained. Restore only the app directory from the
+  shared-dataset snapshot, following `docs/migration.md`.
+- Live API detects Intel Arc A770 Graphics with **15,473 MB** usable total GPU memory,
+  optional free memory and sample provenance. Credentials/API token are unchanged;
+  settings are preserved with the new default request-worker setting. The queue's
+  original running state was restored. Stale provider notices are absent.
+- Served JavaScript hash matches the tested source. The native browser tool stalled;
+  visual browser verification is not complete. Fresh manager discovery was still
+  running at the initial live check; no completed full-library duration or inference
+  throughput benchmark is claimed. Subsequent filesystem work remains Module 03's scope.
 
 ## Copy this entry for each task
 
