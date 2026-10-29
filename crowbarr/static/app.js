@@ -298,13 +298,16 @@ function dashboardJobList(items, finished = false) {
 }
 function systemStrip() {
   const r = status?.resources || {};
+  const gpuMemory = r.vram_free_mb == null
+    ? r.vram_total_mb == null ? "Unavailable" : `${fmt(r.vram_total_mb)} MB total · free unavailable`
+    : `${fmt(r.vram_free_mb)} / ${fmt(r.vram_total_mb)} MB free`;
+  const memoryAge = r.gpu_memory_cached && r.gpu_memory_sampled_at != null
+    ? ` (cached · ${ago(r.gpu_memory_sampled_at)})` : "";
   const resources = [
-    ["GPU", r.gpu || "Not detected"],
+    ["GPU", r.gpu || (r.gpu_status === "checking" ? "Checking…" : "Not detected")],
     [
       "GPU memory",
-      r.vram_free_mb == null
-        ? "Unavailable"
-        : `${fmt(r.vram_free_mb)} / ${fmt(r.vram_total_mb)} MB free`,
+      gpuMemory + memoryAge,
     ],
     [
       "RAM available",

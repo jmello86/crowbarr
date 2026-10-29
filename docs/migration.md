@@ -1,6 +1,6 @@
 # Migration and backup
 
-## Upcoming policy projection migration (unreleased)
+## Policy projection migration (0.4.15)
 
 The Module 01 implementation adds cached policy revisions, a dirty-path queue, and a
 durable scan cursor. Its schema changes are transactional and additive. Existing
@@ -18,8 +18,7 @@ not removed by this migration.
 Use the complete stopped-service backup procedure below before upgrading. For rollback,
 save the new app data, then restore the pre-upgrade app data and its matching old image;
 do not assume that downgrading the image alone reverses the new schema/triggers. Test
-the rollback with a disposable copy first. This implementation has not been deployed
-by the development checks described in the implementation ledger.
+the rollback with a disposable copy first.
 
 ## Existing installation data
 

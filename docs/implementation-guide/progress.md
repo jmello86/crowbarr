@@ -5,8 +5,8 @@ No implementation module is complete merely because this guide exists.
 
 | Module | State | Last completed task | Evidence / next action |
 | --- | --- | --- | --- |
-| 01 | Complete | 01.6 | 377 passed, 6 skipped; Ruff/wheel pass. Local module commit; unreleased. |
-| 02 | Complete | 02.5 | 449 passed, 6 skipped; Ruff/wheel pass. Local module commit; unreleased. |
+| 01 | Complete | 01.6 | 377 passed, 6 skipped; Ruff/wheel pass. Included in 0.4.15 release candidate. |
+| 02 | Complete | 02.5 | 449 passed, 6 skipped; Ruff/wheel pass. Included in 0.4.15 release candidate. |
 | 03 | Not started | — | Ready for 03.1; Module 02 exit gate passed. |
 | 04 | Not started | — | Requires 03 exit gate. |
 | 05 | Not started | — | Requires 04 exit gate. |
@@ -234,6 +234,24 @@ No implementation module is complete merely because this guide exists.
   There is no Module 02 schema migration to reverse; back up current data and preserve
   paths/settings when changing images. Full system rollback still follows `docs/migration.md`.
 - Next module: **03 — Filesystem scan caching**, task **03.1** (ScanContext and operation counters).
+
+## 0.4.15 release candidate
+
+- Includes completed Modules 01/02 and the separately requested Intel GPU telemetry
+  and sync-status fixes. Module 03 remains unstarted.
+- Intel telemetry uses the existing isolated, cached capability probe. Missing free
+  memory support does not hide an available GPU; the dashboard labels cached samples.
+  CUDA admission remains unchanged; cached Intel memory is not a live admission gate.
+- Successful provider discovery clears old connection notices immediately. Status
+  ignores older notices superseded by success, while retaining current failures and
+  newer path warnings. Transport failures identify interrupted connections instead
+  of implying credentials or mappings are necessarily wrong.
+- Regression/full-suite evidence: **463 passed, 6 skipped** in 120.91 seconds on
+  Python 3.12. Ruff and the 0.4.15 wheel build pass. JavaScript syntax and three
+  system-strip render cases pass (Intel cached memory, unknown free memory, checking).
+- Physical Intel Arc GPU access was verified on the existing installation. Release
+  publication and the stopped-service backup/deployment still require verification.
+  The native browser tool stalled; visual verification is not yet complete.
 
 ## Copy this entry for each task
 

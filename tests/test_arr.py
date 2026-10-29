@@ -289,6 +289,49 @@ def test_existing_catalog_schema_migrates(tmp_path):
     assert db.snapshot()["integrations"][0]["healthy"] == 1
 
 
+def test_successful_catalog_clears_old_transport_notice_before_file_inspection(tmp_path):
+    db = Database(tmp_path / "queue.db")
+    db.notice("sonarr", "Sonarr library sync failed (RemoteProtocolError)")
+    db.replace_catalog("sonarr", [])
+    assert not [n for n in db.snapshot()["notices"] if n["name"] == "sonarr"]
+
+
+def test_dashboard_hides_legacy_notices_older_than_success_but_keeps_newer_errors(tmp_path):
+    db = Database(tmp_path / "queue.db")
+    db.replace_catalog("radarr", [])
+    with db.connect() as c:
+        success = c.execute("SELECT last_success FROM provider_sync WHERE provider='radarr'").fetchone()[0]
+        c.execute("INSERT INTO notices VALUES ('radarr','old ReadError',?)", (success - 60,))
+    db.invalidate_sync()  # Restart freshness checks must not resurrect an obsolete error.
+    assert not [n for n in db.snapshot()["notices"] if n["name"] == "radarr"]
+    db.notice("radarr", "A current path could not be read")
+    assert any(n["message"] == "A current path could not be read" for n in db.snapshot()["notices"])
+
+
+@pytest.mark.parametrize("failure", [httpx.ReadError, httpx.RemoteProtocolError])
+def test_transport_failure_notice_is_distinct_from_credentials(catalog_library, failure):
+    _, settings, db, factory = catalog_library
+
+    class Broken(factory):
+        def catalog(self):
+            raise failure("private response detail")
+
+    scan_arr(settings, db, Broken)
+    notice = next(n for n in db.snapshot()["notices"] if n["name"] == "radarr")
+    assert "connection interrupted" in notice["message"]
+    assert "Crowbarr will retry" in notice["message"]
+    assert "API key" not in notice["message"]
+    assert "private response detail" not in notice["message"]
+
+
+def test_current_transport_failure_is_not_hidden_by_older_success(tmp_path):
+    db = Database(tmp_path / "queue.db")
+    db.replace_catalog("sonarr", [])
+    db.sync_failed("sonarr", "current failure")
+    db.notice("sonarr", "current failure")
+    assert any(n["message"] == "current failure" for n in db.snapshot()["notices"])
+
+
 def test_connection_test_names_the_mapping_a_library_needs(tmp_path):
     """An empty library and a correct one look identical. Asking the manager where its
     libraries are turns silence into an instruction."""

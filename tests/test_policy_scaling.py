@@ -299,7 +299,7 @@ def test_policy_maintenance_runs_while_paused(tmp_path, monkeypatch):
     daemon = service.Service(store, db)
     ticks = iter([False, True])
     monkeypatch.setattr(daemon.stop_event, "wait", lambda *_: next(ticks))
-    monkeypatch.setattr(service, "resource_snapshot", lambda: {"ram_available_mb": 4096, "cpu_load": 0})
+    monkeypatch.setattr(service, "resource_snapshot", lambda **_: {"ram_available_mb": 4096, "cpu_load": 0})
     daemon.worker()
     assert db.get(1)["state"] == "queued"
     assert db.get(1)["attempts"] == 0

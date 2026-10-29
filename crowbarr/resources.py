@@ -4,17 +4,35 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 
 
-def snapshot() -> dict:
+def _intel_snapshot() -> dict:
+    # The cached probe imports Torch only in its bounded subprocess, never here.
+    from .capabilities import runtime_capabilities
+
+    report = runtime_capabilities(block=False)
+    xpu = report.get("xpu", {})
+    result = {"gpu_backend": "xpu", "gpu_status": "checking" if report.get("status") == "checking"
+              else "available" if xpu.get("available") is True else "unavailable"}
+    if xpu.get("available") is True:
+        result.update(gpu=xpu.get("device_name") or "Intel GPU · XPU",
+                      vram_total_mb=xpu.get("vram_total_mb"), vram_free_mb=xpu.get("vram_free_mb"),
+                      gpu_memory_sampled_at=xpu.get("memory_sampled_at"),
+                      gpu_memory_source=xpu.get("memory_source"), gpu_memory_cached=True)
+    return result
+
+
+def snapshot(device: str | None = None) -> dict:
     result = {
         "ram_available_mb": None,
         "vram_free_mb": None,
         "vram_total_mb": None,
         "cpu_load": os.getloadavg()[0] / max(1, os.cpu_count() or 1),
         "gpu": None,
+        "gpu_status": "unavailable",
     }
     try:
         memory = dict(line.split(":", 1) for line in Path("/proc/meminfo").read_text().splitlines())
@@ -38,6 +56,9 @@ def snapshot() -> dict:
         result["ram_available_mb"] = round(available)
     except (OSError, ValueError, KeyError):
         pass
+    if device == "xpu" or (device != "cuda" and os.environ.get("CROWBARR_IMAGE_VARIANT") == "intel"):
+        result.update(_intel_snapshot())
+        return result
     try:
         output = (
             subprocess.run(
@@ -50,9 +71,13 @@ def snapshot() -> dict:
             .stdout.splitlines()[0]
             .split(",")
         )
-        result.update(gpu=output[0].strip(), vram_free_mb=int(output[1]), vram_total_mb=int(output[2]))
+        result.update(gpu=output[0].strip(), vram_free_mb=int(output[1]), vram_total_mb=int(output[2]),
+                      gpu_backend="cuda", gpu_status="available", gpu_memory_cached=False,
+                      gpu_memory_sampled_at=time.time(), gpu_memory_source="nvidia-smi")
     except (OSError, ValueError, IndexError, subprocess.SubprocessError):
         pass
+    if result["gpu"] is None and device != "cuda":
+        result.update(_intel_snapshot())
     return result
 
 

@@ -13,6 +13,7 @@ _PROBE = r'''
 import ctypes
 import os
 import sys
+import time
 
 result = {}
 try:
@@ -49,6 +50,30 @@ try:
     # Exercise the driver and device permissions, not just package presence.
     torch.ones(1, device="xpu").cpu()
     result["xpu"] = {"available": True, "reason": "", "compute_types": ["float16", "float32"]}
+    # Telemetry is optional: an unsupported memory query must not hide a working GPU.
+    telemetry = {"device_name": "Intel GPU · XPU", "vram_total_mb": None,
+                 "vram_free_mb": None, "memory_sampled_at": None, "memory_source": None}
+    try:
+        name = torch.xpu.get_device_name(0)
+        if isinstance(name, str) and name.strip():
+            telemetry["device_name"] = name.strip()
+    except Exception:
+        pass
+    try:
+        total = int(torch.xpu.get_device_properties(0).total_memory)
+        if total > 0:
+            telemetry.update(vram_total_mb=total // 1024**2,
+                             memory_sampled_at=time.time(), memory_source="device_properties")
+    except Exception:
+        pass
+    try:
+        free, total = map(int, torch.xpu.mem_get_info(0))
+        if total > 0 and 0 <= free <= total:
+            telemetry.update(vram_total_mb=total // 1024**2, vram_free_mb=free // 1024**2,
+                             memory_sampled_at=time.time(), memory_source="torch.xpu.mem_get_info")
+    except Exception:
+        pass
+    result["xpu"].update(telemetry)
 except Exception:
     result["xpu"] = {"available": False, "reason": "Intel GPU is unavailable. Build the Intel image, expose /dev/dri and add the render device's numeric group ID. The host needs a working Intel GPU driver.", "compute_types": []}
 try:

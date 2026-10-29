@@ -81,7 +81,11 @@ python -c 'import torch; print(torch.xpu.is_available()); print(torch.xpu.get_de
 It should print `True`, the Intel device name, and a tensor. Run a job and check its
 runtime report for `xpu`; `cpu` with a fallback reason means GPU inference failed.
 Disable CPU fallback while diagnosing failures if you want the job to stop instead.
-Intel GPU memory telemetry is not currently shown on the dashboard.
+Version 0.4.15 reports the Intel device name and GPU memory on the dashboard. These
+readings come from the isolated runtime probe and are labeled cached (up to five
+minutes between probes), rather than live allocation counters. If the driver cannot
+report global free memory, Crowbarr shows the total when available and labels free
+memory unavailable; this does not mark an otherwise working GPU as missing.
 
 Hardware detection runs in the background at startup and can take around 30 seconds
 while the inference and alignment libraries initialize. Version 0.4.13 allows up to

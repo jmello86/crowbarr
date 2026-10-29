@@ -1,8 +1,7 @@
-# Library discovery controls (unreleased modules)
+# Library discovery controls
 
-These controls describe the local Module 02 implementation, following the Module 01
-queue-policy work. They are not part of the previously published 0.4.14 image yet.
-No live-server configuration changes or deployment are implied by these instructions.
+Version 0.4.15 includes the Module 02 discovery controls and Module 01 queue-policy
+work. The previously published 0.4.14 image does not include these controls.
 
 ## Request concurrency
 
@@ -36,6 +35,12 @@ existing 20-second HTTPX timeout per I/O phase, redirects disabled, and environm
 proxies disabled. This is not a guarantee of a 20-second total library scan.
 
 ## Retry and cancellation behavior
+
+Temporary read/protocol failures are reported as interrupted connections with automatic
+retry, rather than as evidence of a bad API key or path mapping. A successful catalog
+fetch clears its older connection warning before lengthy filesystem inspection starts.
+Newer file-access warnings remain visible. HTTP 401/403 is reported as authentication
+rejection; other HTTP failures retain their status code.
 
 Only GET requests are retried. Transport failures and HTTP 429/502/503/504 receive at
 most three total attempts. A valid Retry-After delta/date is clamped to 1–60 seconds;

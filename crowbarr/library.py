@@ -7,6 +7,8 @@ import subprocess
 import time
 from pathlib import Path
 
+import httpx
+
 from .arr import ArrClient
 from .config import Settings, atomic_write
 from .db import Database
@@ -257,7 +259,16 @@ def scan_arr(settings: Settings, db: Database, client_factory=ArrClient) -> int:
                 files = client.catalog()
             db.replace_catalog(provider, [file.record() for file in files], settings.discovery_fingerprint())
         except Exception as error:
-            message = f"{provider.title()} library sync failed ({type(error).__name__}). Check its URL, API key, and path mappings."
+            if isinstance(error, httpx.TransportError):
+                message = (f"{provider.title()} connection interrupted ({type(error).__name__}); "
+                           "Crowbarr will retry. Check the service and network if this persists.")
+            elif isinstance(error, httpx.HTTPStatusError) and error.response.status_code in {401, 403}:
+                message = f"{provider.title()} rejected authentication; check its saved API key."
+            elif isinstance(error, httpx.HTTPStatusError):
+                message = (f"{provider.title()} returned HTTP {error.response.status_code}; "
+                           "Crowbarr will retry. Check the service and request limits if this persists.")
+            else:
+                message = f"{provider.title()} library sync failed ({type(error).__name__}). Check its URL, API key, and path mappings."
             db.sync_failed(provider, message)
             db.notice(provider, message)
             continue

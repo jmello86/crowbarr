@@ -221,7 +221,7 @@ class Service:
                 self.db.refresh_policy_batch()
                 settings = self.store.get()
                 if time.monotonic() - self.last_resource_check > 10:
-                    self.resources = resource_snapshot()
+                    self.resources = resource_snapshot(device=settings.device)
                     self.last_resource_check = time.monotonic()
                     try:
                         self.plex_busy = bool(plex_activity(settings.plex)) if settings.plex.url else False
@@ -314,7 +314,7 @@ class Service:
                         elif time.monotonic() - started > settings.job_timeout_minutes * 60:
                             interrupted = "Job exceeded its configured time limit"
                     if not interrupted and time.monotonic() - self.last_resource_check > 10:
-                        self.resources = resource_snapshot()
+                        self.resources = resource_snapshot(device=current.device)
                         self.last_resource_check = time.monotonic()
                     if interrupted:
                         try:

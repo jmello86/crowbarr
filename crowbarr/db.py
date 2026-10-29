@@ -430,6 +430,9 @@ class Database:
                 "INSERT OR REPLACE INTO provider_sync (provider,last_attempt,last_success,healthy,file_count,error,generation) VALUES (?,?,?,?,?,NULL,?)",
                 (provider, now, now, 1, len(records), generation),
             )
+            # A successful catalog fetch settles an older connection failure now;
+            # do not retain it until a potentially long filesystem inspection ends.
+            db.execute("DELETE FROM notices WHERE name=?", (provider,))
 
     @staticmethod
     def save_library_metadata(connection, records: list[dict]) -> None:
@@ -951,7 +954,10 @@ class Database:
                 db.execute("SELECT COUNT(*) FROM managed_media").fetchone()[0]
                 or db.execute("SELECT COUNT(DISTINCT media) FROM jobs").fetchone()[0]
             )
-            notices = [dict(row) for row in db.execute("SELECT * FROM notices ORDER BY name")]
+            notices = [dict(row) for row in db.execute(
+                "SELECT n.* FROM notices n WHERE NOT EXISTS (SELECT 1 FROM provider_sync s "
+                "WHERE s.provider=n.name AND s.error IS NULL AND s.last_success>n.updated) ORDER BY n.name"
+            )]
             integrations = [
                 dict(row)
                 for row in db.execute(

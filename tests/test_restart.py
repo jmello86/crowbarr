@@ -321,7 +321,7 @@ def test_active_worker_interruption_preserves_retry_and_new_request(tmp_path, mo
     monkeypatch.setattr(
         service.multiprocessing, "get_context", lambda method: SimpleNamespace(Process=lambda **kw: child)
     )
-    monkeypatch.setattr(service, "resource_snapshot", lambda: {})
+    monkeypatch.setattr(service, "resource_snapshot", lambda **_: {})
     monkeypatch.setattr(service, "gate", lambda *args: "")
     monkeypatch.setattr(service.os, "killpg", stop_group)
     instance.worker()

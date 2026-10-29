@@ -85,6 +85,13 @@ release with split versioning requeues nothing.
 `APPLICATION_VERSION`. Identifies a published release. Changing it alone never
 re-audits anything.
 
+### 0.4.15
+
+- Show Intel XPU device names and cached GPU memory on the dashboard; keep working GPUs visible when free-memory telemetry is unsupported.
+- Clear recovered manager connection warnings after a successful catalog fetch, and distinguish temporary transport failures from authentication errors.
+- Fetch Sonarr libraries with bounded request concurrency and retries while preserving complete-catalog failure safety.
+- Keep queue policy checks bounded and validate current skip rules at subtitle publication and manual approval.
+
 ### 0.4.14
 
 - Keep queued subtitle jobs and library synchronization moving on large Sonarr and Radarr libraries.
