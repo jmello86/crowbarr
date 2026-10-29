@@ -264,10 +264,12 @@ No implementation module is complete merely because this guide exists.
   optional free memory and sample provenance. Credentials/API token are unchanged;
   settings are preserved with the new default request-worker setting. The queue's
   original running state was restored. Stale provider notices are absent.
+- Fresh discovery subsequently succeeded on both managers: **134,577 Sonarr files**
+  and **6,092 Radarr files**, with both provider health gates satisfied and no notices.
+  The filesystem inspection was still running; no completed full-library duration or
+  inference throughput benchmark is claimed. Filesystem work remains Module 03's scope.
 - Served JavaScript hash matches the tested source. The native browser tool stalled;
-  visual browser verification is not complete. Fresh manager discovery was still
-  running at the initial live check; no completed full-library duration or inference
-  throughput benchmark is claimed. Subsequent filesystem work remains Module 03's scope.
+  visual browser verification is not complete.
 
 ## Copy this entry for each task
 
