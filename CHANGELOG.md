@@ -13,6 +13,14 @@ results a person deliberately set aside.
 Read this section before upgrading: a bump means recognition work, and it can publish
 subtitles that the previous policy declined to.
 
+### 0.3.8
+
+- Backport upstream's adaptive spoken-language probes: listen to additional distributed
+  samples only when fewer than two of the initial three contain confident speech.
+  Quiet scenes no longer cause otherwise English files to be sent to review.
+- Reopens `review` and `failed` jobs. Completed, unchanged and deliberately skipped
+  results remain settled; recognition caches keep their existing version.
+
 ### 0.3.7
 
 - Verify spoken language using distributed multilingual speech samples before recognition
@@ -84,6 +92,21 @@ release with split versioning requeues nothing.
 
 `APPLICATION_VERSION`. Identifies a published release. Changing it alone never
 re-audits anything.
+
+### 0.4.17
+
+- Backport fixes from official Crowbarr through upstream 0.4.15; see
+  [the upstream comparison](docs/upstream-sync.md) for the scope and preserved fork changes.
+- Saving unrelated settings no longer probes every pending video for duration.
+  Minimum-duration changes perform that work after the settings response.
+- Keep the library scanner alive when recording a failure notice also encounters a
+  database lock, and distinguish an unreachable Plex server from active playback.
+- Apply Bazarr wait changes to waiting jobs and release the wait when Run next is used.
+  Show ready jobs before waiting jobs in Activity.
+- Refresh mixed text-and-element library headings correctly so a changed movie title
+  does not retain the previous row's text; fix the show expansion button markup.
+- Include audit policy 0.3.8's adaptive language checks. Intel acceleration and the
+  FP16 normalization fix remain intact.
 
 ### 0.4.16
 

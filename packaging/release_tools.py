@@ -117,7 +117,7 @@ def manifests(version, output, source=Path(".")):
     for name in (
         "README.md", "CHANGELOG.md", "CONTRIBUTING.md", "LICENSE", ".env.example",
         "workflow.html", "docs/docker.md", "docs/nas.md", "docs/unraid.md", "docs/migration.md",
-        "docs/linux.md", "integrations/bazarr-notify.py",
+        "docs/linux.md", "docs/upstream-sync.md", "integrations/bazarr-notify.py",
     ):
         path = source / name
         if path.exists():
