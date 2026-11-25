@@ -49,6 +49,11 @@ def _load_model(settings: Settings, cache: Path):
     del model._buffers["alignment_heads"]
     if settings.compute_type == "float16":
         model.half()
+        # Whisper's LayerNorm.forward casts activations to FP32. Its weights and
+        # bias must stay FP32 too; converting them to half breaks XPU inference.
+        for module in model.modules():
+            if isinstance(module, torch.nn.LayerNorm):
+                module.float()
     model.to("xpu")
     model.register_buffer("alignment_heads", heads, persistent=False)
     # Arc has no FP64. Upstream DTW converts to double before moving to the CPU,

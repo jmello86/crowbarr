@@ -85,6 +85,13 @@ release with split versioning requeues nothing.
 `APPLICATION_VERSION`. Identifies a published release. Changing it alone never
 re-audits anything.
 
+### 0.4.16
+
+- Keep Whisper normalization weights in FP32 during Intel FP16 recognition, preventing
+  the Float/Half error that caused recognition to fall back to CPU.
+- Exercise the production precision setup with real Whisper normalization layers in
+  the Intel image smoke check. Audit policy and recognition cache versions are unchanged.
+
 ### 0.4.15
 
 - Show Intel XPU device names and cached GPU memory on the dashboard; keep working GPUs visible when free-memory telemetry is unsupported.

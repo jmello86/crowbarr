@@ -19,7 +19,7 @@ def main():
 
     from crowbarr.capabilities import _run_probe
     from crowbarr.config import Settings
-    from crowbarr.intel_inference import _recognize
+    from crowbarr.intel_inference import _load_model, _recognize
 
     check_imports()
     print("Checking complete runtime detection in a fresh subprocess", flush=True)
@@ -33,6 +33,22 @@ def main():
         cache = Path(directory)
         print("Loading the tiny English checkpoint on CPU", flush=True)
         model = whisper.load_model("tiny.en", device="cpu", download_root=str(cache))
+        # Exercise the production precision setup with real Whisper layers. Only
+        # GPU availability and transfer are stubbed on this CPU-only runner.
+        fp16 = Settings(model="tiny.en", device="xpu", compute_type="float16", cpu_threads=2)
+        with patch("torch.xpu.is_available", return_value=True), \
+                patch("whisper.load_model", return_value=model), \
+                patch.object(model, "to", return_value=model):
+            _load_model(fp16, cache)
+        assert model.encoder.conv1.weight.dtype == torch.float16
+        for layer in model.modules():
+            if isinstance(layer, torch.nn.LayerNorm):
+                assert layer.weight.dtype == layer.bias.dtype == torch.float32
+                value = torch.randn(2, layer.normalized_shape[0], dtype=torch.float16)
+                result = layer(value)
+                assert result.dtype == torch.float16 and torch.isfinite(result).all()
+        print("Production FP16 loader preserves working FP32 normalization", flush=True)
+        model.float()
         settings = Settings(model="tiny.en", device="xpu", compute_type="float32", cpu_threads=2)
         # Test the installed adapter against real audio without pretending this
         # hosted runner has a GPU. Production uses the XPU model loader here.

@@ -129,11 +129,18 @@ def test_multilingual_wrong_language_still_requires_review(backend, monkeypatch,
         inference.transcribe(tmp_path / "audio.wav", intel_settings, tmp_path)
 
 
-def test_xpu_model_keeps_sparse_heads_on_cpu_and_moves_dtw_before_double(monkeypatch, tmp_path, intel_settings):
+@pytest.mark.parametrize("precision", ["float16", "float32"])
+def test_xpu_model_keeps_sparse_heads_on_cpu_and_moves_dtw_before_double(
+    monkeypatch, tmp_path, intel_settings, precision
+):
     import types
 
     events = []
     heads = object()
+
+    class LayerNorm:
+        def float(self):
+            events.append("norm-float")
 
     class Model:
         _buffers = {"alignment_heads": heads}
@@ -149,6 +156,9 @@ def test_xpu_model_keeps_sparse_heads_on_cpu_and_moves_dtw_before_double(monkeyp
         def half(self):
             events.append("half")
 
+        def modules(self):
+            return [self, LayerNorm()]
+
     whisper = types.ModuleType("whisper")
     timing = types.ModuleType("whisper.timing")
     timing.dtw = lambda tensor: tensor
@@ -158,11 +168,13 @@ def test_xpu_model_keeps_sparse_heads_on_cpu_and_moves_dtw_before_double(monkeyp
     monkeypatch.setitem(sys.modules, "whisper.timing", timing)
     monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(
         xpu=SimpleNamespace(is_available=lambda: True), set_num_threads=lambda *a: None,
+        nn=SimpleNamespace(LayerNorm=LayerNorm),
     ))
     monkeypatch.setattr(intel_inference, "_key", None)
     monkeypatch.setattr(intel_inference, "_model", None)
+    intel_settings = intel_settings.model_copy(update={"compute_type": precision})
     model = intel_inference._load_model(intel_settings, tmp_path)
     assert intel_inference._load_model(intel_settings, tmp_path) is model
-    assert events == ["half", "xpu"]
+    assert events == (["half", "norm-float", "xpu"] if precision == "float16" else ["xpu"])
     tensor = SimpleNamespace(device=SimpleNamespace(type="xpu"), cpu=lambda: "cpu tensor")
     assert timing.dtw(tensor) == "cpu tensor"
