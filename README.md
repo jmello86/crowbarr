@@ -65,9 +65,10 @@ Open `http://YOUR-IP-ADDRESS:8449`. Data is stored in `/var/lib/crowbarr`.
 ## Updating
 
 - **Native Linux**: Run `sudo crowbarr-update`.
-- **Docker / Containers**: Pull the latest image and recreate the container (or use the [release-only Portainer setup](docs/nas.md#portainer)).
-- **Intel fork**: Pull `ghcr.io/jmello86/crowbarr:intel` and recreate the container.
-  The channel advances after successful builds from `intel`; no local build is required.
+- **Docker / Containers**: Select **Update** in the sidebar, or Settings, Updates ([details](docs/docker.md#updating-from-inside-crowbarr)). Or pull the latest image and recreate the container, or use the [release-only Portainer setup](docs/nas.md#portainer).
+- **Intel fork**: Settings → Updates checks this fork’s releases. Compatible app updates
+  install in place; runtime changes require pulling `ghcr.io/jmello86/crowbarr:intel`
+  and recreating the container. The `intel` channel advances only after verification.
 
 Data and queues in `/var/lib/crowbarr` are preserved across updates; interrupted jobs resume automatically. When an update changes the audit policy, `review` and `failed` jobs are automatically re-evaluated.
 

@@ -1,10 +1,19 @@
 name: Release
 
+# A release is wanted whenever main selects a version that has no published release.
+# Starting only when version.py changes meant one failed run (a flaky test, a registry
+# outage) left the release undone until someone started it by hand. Every push and a
+# periodic schedule now try again, and the check job ends the run at once when the
+# version is already published. A push to main is released only after the Tests workflow
+# has passed on that exact commit, so the tests run once. The schedule and manual runs
+# have no Tests run to wait for, so they run the tests themselves.
 on:
-  push:
+  workflow_run:
+    workflows: [Tests]
+    types: [completed]
     branches: [main]
-    paths:
-      - crowbarr/version.py
+  schedule:
+    - cron: "17 */6 * * *"
   workflow_dispatch:
     inputs:
       verify_only:
@@ -22,15 +31,67 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  check:
+    name: Check for an unpublished version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      pending: ${{ steps.check.outputs.pending }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFY_ONLY: ${{ inputs.verify_only }}
+          EVENT: ${{ github.event_name }}
+          TESTED_RESULT: ${{ github.event.workflow_run.conclusion }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [[ "$VERIFY_ONLY" == true ]]; then
+            echo "pending=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$EVENT" == workflow_run ]]; then
+            if [[ "$TESTED_RESULT" != success ]]; then
+              echo "The tests did not pass, so nothing is released."
+              echo "pending=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            # This run sees the newest commit on main. Release only the commit that was tested.
+            if [[ "$TESTED_SHA" != "$GITHUB_SHA" ]]; then
+              echo "main has moved on from the tested commit; the newer push is released after its own tests."
+              echo "pending=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          version="$(sed -n 's/^APPLICATION_VERSION = "\(.*\)"/\1/p' crowbarr/version.py)"
+          test -n "$version"
+          # A draft is an interrupted publish, so it still counts as pending.
+          draft="$(gh release view "v$version" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null || echo missing)"
+          if [[ "$draft" == false ]]; then
+            echo "Release v$version is already published."
+            echo "pending=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Release v$version is not published yet."
+            echo "pending=true" >> "$GITHUB_OUTPUT"
+          fi
+
   tests:
+    needs: check
+    if: needs.check.outputs.pending == 'true' && github.event_name != 'workflow_run'
     uses: ./.github/workflows/test.yml
     permissions:
       contents: read
 
   release-version:
     name: Read release version
-    needs: tests
-    if: github.ref == 'refs/heads/main' || inputs.verify_only == true
+    needs: [check, tests]
+    # `tests` is skipped when the Tests workflow already passed on this commit.
+    if: >-
+      ${{ !cancelled() && needs.check.outputs.pending == 'true'
+      && (needs.tests.result == 'success' || needs.tests.result == 'skipped')
+      && (github.ref == 'refs/heads/main' || inputs.verify_only == true) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -80,7 +141,9 @@ jobs:
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
 
   image:
-    if: needs.release-version.outputs.publish == 'true'
+    # `tests` is skipped when the Tests workflow already passed. A plain condition would
+    # inherit that skip from this job's ancestors, so every job here checks results itself.
+    if: ${{ !cancelled() && needs.release-version.result == 'success' && needs.release-version.outputs.publish == 'true' }}
     needs: release-version
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -152,7 +215,7 @@ jobs:
 
   native-linux:
     name: Build Linux x86_64 package
-    if: needs.release-version.outputs.publish == 'true'
+    if: ${{ !cancelled() && needs.release-version.result == 'success' && needs.release-version.outputs.publish == 'true' }}
     needs: release-version
     runs-on: ubuntu-22.04
     permissions:
@@ -220,7 +283,11 @@ jobs:
 
   publish:
     name: Publish verified assets
-    if: needs.release-version.outputs.publish == 'true' && github.ref == 'refs/heads/main' && inputs.verify_only != true
+    if: >-
+      ${{ !cancelled() && needs.release-version.result == 'success'
+      && needs.image.result == 'success' && needs.native-linux.result == 'success'
+      && needs.release-version.outputs.publish == 'true'
+      && github.ref == 'refs/heads/main' && inputs.verify_only != true }}
     needs: [release-version, image, native-linux]
     runs-on: ubuntu-latest
     permissions:
@@ -245,6 +312,13 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build the in-app update files
+        env:
+          VERSION: ${{ needs.release-version.outputs.version }}
+        run: |
+          python -m pip wheel --no-deps --wheel-dir release-assets .
+          python packaging/release_tools.py update-manifest "$VERSION" \
+            "release-assets/crowbarr-$VERSION-py3-none-any.whl" release-assets
       - name: Verify all assets and reject stale runs before promotion
         env:
           VERSION: ${{ needs.release-version.outputs.version }}

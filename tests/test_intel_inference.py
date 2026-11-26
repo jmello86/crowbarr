@@ -85,25 +85,30 @@ def test_subframe_vad_span_requires_review(backend, tmp_path, intel_settings):
 
 
 @pytest.mark.parametrize("fallback", [True, False])
+@pytest.mark.parametrize("speech_filter", [True, False])
 @pytest.mark.parametrize("error", [RuntimeError("decode failed"), ImportError("missing runtime")])
 def test_gpu_failures_obey_fallback_and_report_actual_backend(
-    monkeypatch, tmp_path, intel_settings, fallback, error
+    monkeypatch, tmp_path, intel_settings, fallback, error, speech_filter
 ):
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise error
 
     monkeypatch.setattr(intel_inference, "_recognize", fail)
     calls = []
 
-    def cpu_transcribe(audio, settings, cache):
+    def cpu_transcribe(audio, settings, cache, speech_filter=True):
         calls.append(settings)
+        assert speech_filter == expected_filter
         cpu_transcribe.runtime = {"backend": "cpu", "compute_type": "int8", "requested_backend": "cpu"}
         return [Word(1, 2, "Hello", 0.9)], []
 
     monkeypatch.setattr(inference, "transcribe", cpu_transcribe)
     settings = intel_settings.model_copy(update={"cpu_fallback": fallback})
+    expected_filter = speech_filter
     if fallback:
-        words, _ = intel_inference.transcribe_intel(tmp_path / "audio.wav", settings, tmp_path)
+        words, _ = intel_inference.transcribe_intel(
+            tmp_path / "audio.wav", settings, tmp_path, speech_filter=speech_filter
+        )
         assert words[0].text == "Hello"
         assert calls[0].device == "cpu" and calls[0].compute_type == "int8"
         assert cpu_transcribe.runtime["backend"] == "cpu"
@@ -111,7 +116,7 @@ def test_gpu_failures_obey_fallback_and_report_actual_backend(
         assert "retried on CPU" in cpu_transcribe.runtime["fallback_reason"]
     else:
         with pytest.raises(type(error)):
-            intel_inference.transcribe_intel(tmp_path / "audio.wav", settings, tmp_path)
+            intel_inference.transcribe_intel(tmp_path / "audio.wav", settings, tmp_path, speech_filter=speech_filter)
         assert not calls
 
 
@@ -178,3 +183,14 @@ def test_xpu_model_keeps_sparse_heads_on_cpu_and_moves_dtw_before_double(
     assert events == (["half", "norm-float", "xpu"] if precision == "float16" else ["xpu"])
     tensor = SimpleNamespace(device=SimpleNamespace(type="xpu"), cpu=lambda: "cpu tensor")
     assert timing.dtw(tensor) == "cpu tensor"
+
+
+def test_high_accuracy_intel_audit_bypasses_vad(backend, monkeypatch, tmp_path, intel_settings):
+    def filtered(*args, **kwargs):
+        pytest.fail("High Accuracy audio must not pass through the speech filter")
+
+    monkeypatch.setattr(sys.modules['faster_whisper.vad'], 'get_speech_timestamps', filtered)
+    words, _ = inference.transcribe(tmp_path / 'audio.wav', intel_settings, tmp_path, speech_filter=False)
+    assert words[0].text == 'Hello'
+    assert backend.options['clip_timestamps'] == [0, 10]
+    assert inference.transcribe.runtime['backend'] == 'xpu'

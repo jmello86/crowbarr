@@ -13,6 +13,13 @@ results a person deliberately set aside.
 Read this section before upgrading: a bump means recognition work, and it can publish
 subtitles that the previous policy declined to.
 
+### 0.3.9
+
+- A subtitle with a long stretch of clear speech and no lines for it now gets the `damaged` verdict and is replaced, from Bazarr first and then by generation. The original file stays in place.
+- Sampling now listens to evenly spaced two-minute samples, about 8 to 18 per film. Any sample with clear speech and no subtitle lines sends the file to a full audit.
+- Recordings under about 27 minutes are always audited in full.
+- Reopens `review` and `failed` jobs.
+
 ### 0.3.8
 
 - Backport upstream's adaptive spoken-language probes: listen to additional distributed
@@ -95,18 +102,16 @@ re-audits anything.
 
 ### 0.4.17
 
-- Backport fixes from official Crowbarr through upstream 0.4.15; see
-  [the upstream comparison](docs/upstream-sync.md) for the scope and preserved fork changes.
-- Saving unrelated settings no longer probes every pending video for duration.
-  Minimum-duration changes perform that work after the settings response.
-- Keep the library scanner alive when recording a failure notice also encounters a
-  database lock, and distinguish an unreachable Plex server from active playback.
-- Apply Bazarr wait changes to waiting jobs and release the wait when Run next is used.
-  Show ready jobs before waiting jobs in Activity.
-- Refresh mixed text-and-element library headings correctly so a changed movie title
-  does not retain the previous row's text; fix the show expansion button markup.
-- Include audit policy 0.3.8's adaptive language checks. Intel acceleration and the
-  FP16 normalization fix remain intact.
+- Merge official Crowbarr through upstream 0.4.15, including the redesigned UI,
+  in-app updates with retries and rollback, optional refinement downloads, High Accuracy,
+  policy previews, adaptive language checks, and missing-section detection.
+- Adopt audit policy 0.3.9: more evenly spaced samples and full audits for shorter
+  recordings; review and failed jobs reopen, while settled results remain settled.
+- Route Intel image updates to this fork and publish matching Intel update assets.
+  Preserve the bundled XPU runtime, incremental queue policy work, GPU telemetry,
+  and FP16 normalization fix. High Accuracy's speech-filter setting also applies to XPU.
+- Retain the settings-save, wait scheduling, scanner recovery, Plex status and library
+  display fixes. See [the upstream comparison](docs/upstream-sync.md).
 
 ### 0.4.16
 
@@ -135,6 +140,212 @@ re-audits anything.
 - Intel Arc owners can select Intel GPU · XPU with FP16 or FP32, with CPU fallback when GPU recognition fails.
 - Clamp speech clip endpoints to Whisper's final audio frame to prevent repeated decoding at the end of a clip.
 - Install the Intel image from `ghcr.io/jmello86/crowbarr:intel`; Docker and Unraid setup instructions cover GPU access and updates.
+
+### 0.4.11
+
+- Fixed restart race condition where "database is locked" errors during upgrade (and in later
+    normal operation) caused worker instability and unnecessary retries.
+
+### 0.4.10
+
+- Sign-in and page load no longer wait for hardware detection. The Settings page shows
+  "Checking hardware…" until the report arrives.
+- Saving a setting other than the processing device no longer runs hardware detection.
+
+### 0.4.9
+
+- Integrated audio-language, recognition-confidence, and authored-provider recovery fixes
+  (audit policy 0.3.7). Provider outcomes distinguish requests from changed subtitle bytes.
+
+### 0.4.8
+
+- Videos shorter than set length are skipped. Useful for trailers.
+
+### 0.4.7
+
+- Media library: UI improvements
+
+### 0.4.6
+
+- Library browsing now separates Shows and Movies. Shows expand into season and episode
+  tables, with compact artwork supplied by Sonarr or Radarr.
+- Processing preferences can skip or include a movie, show, season, or episode. Known
+  non-English audio is skipped by default, unknown language remains eligible, and more
+  specific choices override inherited rules. Title and episode rules continue to apply
+  after future imports and file upgrades.
+- Fixed: a recovered library scan could leave its old failure notice on the dashboard.
+  Scan failures now retain their underlying exception and traceback in server logs.
+
+### 0.4.5
+
+- Fixed: Release packaging retries transient Hugging Face failures while downloading the
+  small speech model used to verify the installed inference dependencies.
+- The dashboard shows background processing used in the rolling hour and estimates when
+  work can resume after reaching the limit. Budget-only saves no longer claim that the
+  library will be rechecked.
+
+### 0.4.4
+
+- Fixed: Model changes now keep their chosen queue behavior even when an older library scan
+  is still running. Keeping finished results is stored as a versioned database request.
+- Fixed: Finished results are retained by complete input signature. Returning to the same
+  model, device, precision and audit settings restores unchanged files together without
+  running inference again. Externally changed or missing subtitle outputs are rechecked.
+  Crowbarr retains up to five audit records per file without storing subtitle bodies in
+  the database.
+- Settings show how many files a recheck affects and distinguish library synchronization
+  from an idle worker while queue totals are being reconciled.
+- Review candidates are retained per input signature, so returning to a previous model can
+  restore its review result. Existing review candidates remain available after upgrade.
+- Symbolic links and non-video extras reported by Sonarr or Radarr are ignored without
+  creating a persistent connection warning.
+
+### 0.4.3
+
+- Fixed: choosing a speech model saved the previous one, and never offered to re-check
+  the library or keep existing results.
+- Each model has one button: Download, Select or Active. A model larger than the
+  graphics card is refused.
+
+### 0.4.2
+
+- Media folder setup reads paths from Sonarr and Radarr, applies saved mappings, and
+  reports folders Crowbarr cannot reach.
+- Test folders checks unsaved paths for read and write access.
+- Setup instructions cover Docker, TrueNAS, native installs and path mappings.
+
+### 0.4.1
+
+- Audit policy 0.3.6. Review and failed jobs are re-audited on the first startup.
+
+### 0.4.0
+
+- The NVIDIA image is 2.45 GB, down from 6.98 GB. Recognition still runs on the GPU.
+- Fixed: TrueNAS app updates timed out on the NVIDIA image.
+- Refinement runs on the CPU in both images.
+- Fixed: CUDA was reported as unavailable on systems where it worked.
+
+### 0.3.9
+
+- Dashboard system information is a compact strip; the System readiness section is gone.
+- Page actions moved to the desktop header, beside the page title on mobile.
+- Stronger text selection contrast and clearer keyboard focus in both themes.
+- Outcome counters read "subtitles written" and "subtitles unchanged".
+- Quiet hours use 24-hour dropdowns. The mobile save bar no longer covers fields.
+- Fixed: the CPU load default of `0.75` was rejected, blocking Resource settings from
+  saving.
+- Speech processing marks downloaded models, and refinement shows the alignment model's
+  size, download status and retry action.
+
+### 0.3.8
+
+- WhisperX alignment failures record their cause in the service log. Reports and the
+  dashboard still carry no exception detail.
+
+### 0.3.7
+
+- Settings reports unavailable CUDA and WhisperX runtimes before a selection is saved.
+  Existing device preferences survive an upgrade or a temporary GPU outage.
+- Refinement retries on the CPU when CUDA fails and fallback is enabled. Reports name
+  the backend used. Failed retries publish nothing.
+- Native packages include SciPy's dynamically imported modules, required by alignment.
+- Selecting an older native binary keeps the current updater.
+- Native installations store model caches under `models` in the data directory,
+  matching the images.
+
+### 0.3.6
+
+- Published containers include the WhisperX refinement dependencies. Refinement remains
+  off by default.
+- Portainer can follow the public `release` branch for unattended upgrades. Ordinary
+  source pushes do not redeploy. Channels advance only after tests and runtime checks
+  pass.
+- Installs use persistent host storage with configurable UID/GID, ports and mounts.
+  Missing directories fail before deployment.
+- Restarting drains within the service stop deadline. Administrative interruptions
+  refund their attempt; repeated crashes stop at the retry limit.
+- A replaced job cannot be overwritten by an older worker.
+- Native upgrades keep installation paths and service identity, default to an
+  unprivileged account, and keep the prior binary for failed starts. Daily updates are
+  opt-in.
+- Native packages verify processing in a clean runtime, not just the health endpoint.
+
+### 0.3.5
+
+- Linux x86_64 releases include a runnable package and installer. The installer
+  registers a system service, keeps data in `/var/lib/crowbarr`, and installs
+  `crowbarr-update`.
+
+### 0.3.4
+
+- Removed redundant edit candidates from the dashboard.
+- Added the skip review action.
+
+### 0.3.3
+
+- Review results can be set aside: `POST /api/jobs/{id}/skip` moves a `review` or
+  `failed` job to `skipped`, which policy upgrades do not re-open. Retry brings it back.
+- Generate a fresh subtitle is available from the review panel.
+- `generate_over_mismatch` is exposed in Settings.
+
+### 0.3.2
+
+- Dashboard refocused; the footer distinguishes the two versions.
+
+### 0.3.1
+
+- Audio selection, processing stages and audit reporting surfaced in the UI.
+- Partial DOM updates, worker cooldown tracking, richer status reporting.
+- Dark mode, sidebar navigation, standardised design tokens.
+
+### 0.3.0
+
+Initial published line: core service and background processing, durable job queue,
+`*arr` discovery, Bazarr coordination, sampled audit with escalation to the full file,
+chunked transcription with checkpointing, and forced-alignment fallback.
+
+Entries before `0.3.2` are reconstructed from commit history rather than written at
+release time.
+
+## Official upstream application history
+
+### 0.4.15
+
+- Updates try a dropped connection to GitHub three times before reporting an error.
+- Adds High Accuracy at the top of Speech processing. It turns the voice filter off during full audits, which take about twice as long, and holds retimed subtitles for review. Off by default. Turning it on offers to re-check the library.
+- The refinement download now reads "PyTorch and WhisperX".
+
+### 0.4.14
+
+- The dashboard no longer shows Bazarr and Plex as "Set up" when their addresses are saved; it says "Configured".
+
+### 0.4.13
+
+- Files whose audio has no language tag are no longer sent to review because of quiet stretches. Audit policy 0.3.8 reopens review and failed jobs.
+- Settings, Updates checks GitHub for new releases and installs one in place when the image can run it. The sidebar shows Update to X.
+- Crowbarr asks GitHub every six hours and sends only its version number. Turn this off under Settings, Updates.
+- Automatic installs are off by default.
+- The Docker images no longer include PyTorch and WhisperX. Download them under Settings, Speech processing before turning on refinement.
+- If refinement is on, download the software once after updating. Jobs use Whisper's word timings until then.
+- Tuning options sit under Advanced on each Settings page.
+- Wait for Bazarr moved to Connections, under Bazarr.
+- Skip videos shorter than (minutes) now has a control on the Library page. It always used 10 before.
+- Quiet hours has an on/off switch.
+- Both "no language tag" options are on the Quality page.
+- Library menus read Automatic, Same as show, Same as season, Always process and Never process.
+- Library says when Only monitored hides every Sonarr or Radarr file.
+- Activity and Dashboard use plainer status names, show when waiting files start, and read "1 minute ago".
+- The dashboard shows five number cards, the running job, recent and queued jobs, and a System panel.
+- Plex deferral says "Cannot reach Plex" when Plex does not answer.
+
+### 0.4.12
+
+- Changing the Bazarr wait applies to files already waiting.
+- Run next releases a waiting file at once.
+- Activity lists the running file, then files ready to run, then files still waiting.
+- Fixed clicking a show in Library failing with "Cannot set properties of null".
+- Fixed Library, Activity and Dashboard rows showing the previous row's title after a search or refresh.
+- Saving a setting no longer waits for a scan of short videos.
 
 ### 0.4.11
 

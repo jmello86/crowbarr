@@ -7,7 +7,15 @@ import textwrap
 from bisect import bisect_left
 from pathlib import Path
 
-from .audit import audit, blocking_structural_issues
+from .audit import (
+    SECTION_RUN_MINUTES,
+    SECTION_RUN_SHARE,
+    audit,
+    blocking_structural_issues,
+    sample_missing_speech,
+    section_coverage,
+    with_section,
+)
 from .config import Settings, atomic_write
 from .db import Database
 from .library import allowed, signature, source_subtitle, subtitle_sources
@@ -205,36 +213,46 @@ def _stabilize_authored(cues: list[Cue], minimum: float = 0.04) -> tuple[list[Cu
     return result, adjusted
 
 
-def _sample_windows(cues: list[Cue], duration: float) -> list[tuple[float, float]]:
-    from .subtitles import tokens
+SPACED_SAMPLE_SECONDS = 120
 
+
+def _spaced_windows(duration: float) -> list[tuple[float, float]]:
+    """Samples close enough that a bad section long enough to flag must contain one.
+
+    Positions ignore where the subtitle has lines, because a section with no lines is
+    what these samples look for. Returns nothing when the samples would overlap, and the
+    recording is then heard whole.
+    """
+    limit = min(SECTION_RUN_MINUTES * 60, SECTION_RUN_SHARE * duration)
+    spacing = limit - SPACED_SAMPLE_SECONDS
+    if spacing <= SPACED_SAMPLE_SECONDS:
+        return []
     windows = []
-    for fraction in (0.12, 0.5, 0.85):
-        dialogue = [
-            cue
-            for cue in cues
-            if len(tokens(cue.text)) >= 4 and abs(cue.start - duration * fraction) < duration / 6
-        ]
-        if not dialogue:
-            continue
-        center = min(dialogue, key=lambda cue: abs(cue.start - duration * fraction)).start
-        start, end = max(0, center - 60), min(duration, center + 60)
-        if windows and start <= windows[-1][1]:
-            windows[-1] = (windows[-1][0], end)
-        else:
-            windows.append((start, end))
+    start = spacing / 2
+    while start + SPACED_SAMPLE_SECONDS <= duration:
+        windows.append((start, start + SPACED_SAMPLE_SECONDS))
+        start += spacing
     return windows
+
+
+def _samples_found_a_hole(candidates) -> bool:
+    """Every subtitle that passed its samples has a sample with clear speech and no lines."""
+    return all(
+        any(check["bad"] for check in candidate["audit"].get("sample_speech", []))
+        for candidate in candidates
+        if candidate["audit"]["decision"] == "pass"
+    )
 
 
 # Verdicts that leave nothing for a repair to correct, and that the full transcript
 # already in hand can answer by writing a subtitle of its own.
-UNUSABLE = ("mismatched", "different_cut")
+UNUSABLE = ("mismatched", "different_cut", "damaged")
 
 
 def _needs_full_audio(candidates) -> bool:
     """Whether a sampled verdict is enough to act on, or only enough to stand down.
 
-    Three two-minute windows see about a quarter of an episode. A sample that says the
+    Two-minute samples leave most of a recording unheard. A sample that says the
     subtitle is already correct settles the job, because the answer is to write nothing
     and the rest of the runtime cannot make "leave it alone" harmful. Every other answer
     ends in a file being rewritten, and the cues outside the windows were never matched
@@ -258,7 +276,7 @@ def _audit_source(cues, words, duration, windows, indices=None):
     ]
     result = audit([cue for _, cue in selected], words, duration)
     if result["decision"] in UNUSABLE:
-        # Three windows can land on music, a silent stretch, or the one scene the
+        # Samples can land on music, a silent stretch, or the one scene the
         # sampler chose badly, and they cannot show a staircase that only appears across
         # the whole runtime. Declaring either verdict from a sample is not a finding, it
         # is a guess -- so hand it back as inconclusive and let the escalation to the
@@ -281,6 +299,7 @@ def _recognized_words(
     model_cache: Path,
     transcriber,
     windows=None,
+    speech_filter: bool = True,
 ) -> tuple[list[Word], list[str], bool]:
     stat = media.stat()
     transcript_key = hashlib.sha256(
@@ -296,6 +315,8 @@ def _recognized_words(
                 "compute_type": settings.compute_type,
                 "allow_untagged_audio": settings.allow_untagged_audio,
                 "windows": windows,
+                # Absent when on, so transcripts cached before this option stay valid.
+                **({} if speech_filter else {"speech_filter": False}),
             },
             sort_keys=True,
         ).encode()
@@ -322,7 +343,7 @@ def _recognized_words(
 
         if transcriber is transcribe:
             words, issues = transcribe_bounded(
-                audio, settings, model_cache, transcript_path.with_suffix(".parts")
+                audio, settings, model_cache, transcript_path.with_suffix(".parts"), speech_filter=speech_filter
             )
         else:
             words, issues = transcriber(audio, settings, model_cache)
@@ -511,7 +532,7 @@ def process(
                     "Bazarr has authored alternatives. Enable provider upgrades or choose one in Bazarr before generation."
                 )
         windows = (
-            _sample_windows(max(candidates, key=lambda c: len(c["cues"]))["cues"], duration)
+            _spaced_windows(duration)
             if candidates and settings.sampled_audit and cache_transcript and duration > 600
             else []
         )
@@ -528,7 +549,8 @@ def process(
         db.update(job["id"], stage=recognition_stage[0])
         if cache_transcript:
             words, transcription_issues, transcript_cache_hit = _recognized_words(
-                media, audio, settings, directory, cache, transcriber, windows=windows
+                media, audio, settings, directory, cache, transcriber, windows=windows,
+                speech_filter=not (settings.high_accuracy and candidates and not windows),
             )
             # Say so plainly: a reused transcript finishes in seconds, and that speed
             # must not be mistaken for what a file takes the first time.
@@ -542,6 +564,8 @@ def process(
         arbitration = []
         for candidate in candidates:
             candidate_audit = _audit_source(candidate["cues"], timeline_words, duration, windows)
+            if windows:
+                candidate_audit["sample_speech"] = sample_missing_speech(candidate["cues"], timeline_words, windows)
             candidate["audit"] = candidate_audit
             arbitration.append(
                 {
@@ -570,12 +594,13 @@ def process(
                 candidate_audit["dialogue_coverage"],
             )
 
-        if windows and _needs_full_audio(candidates):
+        if windows and (_needs_full_audio(candidates) or _samples_found_a_hole(candidates)):
             full_audit_escalation = True
             recognition_stage[0] = "Sample cannot settle a change; auditing against full dialogue"
             db.update(job["id"], stage=recognition_stage[0])
             words, transcription_issues, transcript_cache_hit = _recognized_words(
-                media, audio, settings, directory, cache, transcriber
+                media, audio, settings, directory, cache, transcriber,
+                speech_filter=not settings.high_accuracy,
             )
             warnings.extend(transcription_issues)
             windows = []
@@ -625,6 +650,9 @@ def process(
         if original:
             db.update(job["id"], stage="Auditing existing subtitle")
             before = selected["audit"]
+            if not windows:
+                before = with_section(before, section_coverage(selected["cues"], timeline_words, duration))
+                selected["audit"] = before
             report["audit"] = {"before": before, "after": None, "improved": False}
             # An authored replacement is the first recovery option, including for a
             # proven mismatch. A successful HTTP request is not a usable subtitle.
@@ -665,6 +693,14 @@ def process(
                     )
                 report["replaced_source"] = selected["label"]
                 db.update(job["id"], stage="Generating a fresh subtitle for mismatched content")
+                if settings.high_accuracy:
+                    # Only the audit is proven with the filter off. A subtitle people read
+                    # is still written from the filtered transcript.
+                    db.update(job["id"], stage="Recognizing speech for a fresh subtitle")
+                    if cache_transcript:
+                        words, *_ = _recognized_words(media, audio, settings, directory, cache, transcriber)
+                    else:
+                        words, _ = transcriber(audio, settings, cache)
                 original, selected = [], None
                 passages, rewritten = match_passages(original, words, settings.min_match_ratio)
                 report.update(rewritten, mode="generated")
@@ -789,8 +825,8 @@ def process(
                     # Minimal source installs can omit optional refinement dependencies.
                     # Keep usable Whisper timings and report the missing capability.
                     warnings.append(
-                        "WhisperX refinement is not installed in this image; "
-                        "used Whisper word timestamps instead"
+                        "WhisperX refinement is not installed; used Whisper word timestamps instead. "
+                        "Download the refinement software in Settings, Speech processing"
                     )
                     report["alignment_runtime"] = {
                         "requested_backend": settings.device,
@@ -849,6 +885,8 @@ def process(
                 )
             if not verdict["accepted"]:
                 issues.append(f"Retimed subtitle withheld because {verdict['reason']}")
+            if settings.high_accuracy:
+                issues.append("High Accuracy keeps retimed subtitles held for review")
         report.update(
             {
                 "mode": "authored_timing" if original else "generated",

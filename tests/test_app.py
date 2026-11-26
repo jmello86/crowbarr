@@ -26,7 +26,7 @@ def test_dashboard_and_health_public_but_data_private(client):
     assert status.status_code == 200
     assert status.json()["version"] == APPLICATION_VERSION
     assert status.json()["audit_policy_version"] == AUDIT_POLICY_VERSION
-    assert client.get("/static/vendor/bootstrap.min.css").status_code == 200
+    assert client.get("/static/app.css").status_code == 200
 
 
 def test_settings_explain_model_change_and_library_reconciliation(client):
@@ -62,6 +62,23 @@ def test_saving_minimum_duration_removes_short_pending_jobs(client, tmp_path, mo
     job = db.get(job_id)
     assert job["state"] == "skipped"
     assert job["stage"] == "Short video"
+
+
+def test_saving_other_settings_does_not_probe_pending_videos(client, tmp_path, monkeypatch):
+    db = client.app.state.db
+    media = tmp_path / "episode.mkv"
+    media.write_bytes(b"video")
+    db.enqueue(str(media), "signature", None, 0)
+    probed = []
+    monkeypatch.setattr("crowbarr.library.probe", lambda path: probed.append(path))
+
+    response = client.put(
+        "/api/settings", headers=auth(client), json={"subtitle_wait_minutes": 5}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["subtitle_wait_minutes"] == 5
+    assert probed == []
 
 
 def test_settings_secrets_are_write_only_and_preserved(client, tmp_path):
@@ -506,23 +523,6 @@ def test_mount_detection_decodes_spaces_and_excludes_system_folders(tmp_path, mo
     found = suggested_roots(Settings())
     assert found['mounts'] == ['/media/TV Shows']
     assert found['paths'] == [], 'Shared folders are offered for selection, not assumed to contain media'
-
-
-def test_saving_other_settings_does_not_probe_pending_videos(client, tmp_path, monkeypatch):
-    db = client.app.state.db
-    media = tmp_path / "episode.mkv"
-    media.write_bytes(b"video")
-    db.enqueue(str(media), "signature", None, 0)
-    probed = []
-    monkeypatch.setattr("crowbarr.library.probe", lambda path: probed.append(path))
-
-    response = client.put(
-        "/api/settings", headers=auth(client), json={"subtitle_wait_minutes": 5}
-    )
-
-    assert response.status_code == 200
-    assert response.json()["subtitle_wait_minutes"] == 5
-    assert probed == []
 
 
 def test_activity_lists_ready_jobs_before_waiting_ones(client):

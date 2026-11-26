@@ -70,7 +70,7 @@ def _load_model(settings: Settings, cache: Path):
     return model
 
 
-def _recognize(audio: Path, settings: Settings, cache: Path):
+def _recognize(audio: Path, settings: Settings, cache: Path, speech_filter: bool = True):
     import whisper
     from faster_whisper.audio import decode_audio
     from faster_whisper.vad import VadOptions, get_speech_timestamps
@@ -80,7 +80,10 @@ def _recognize(audio: Path, settings: Settings, cache: Path):
     model = _load_model(settings, cache)
     samples = decode_audio(str(audio), sampling_rate=16000)
     duration = len(samples) / 16000
-    speech = get_speech_timestamps(samples, VadOptions(min_silence_duration_ms=2000))
+    speech = (
+        get_speech_timestamps(samples, VadOptions(min_silence_duration_ms=2000))
+        if speech_filter else [{"start": 0, "end": len(samples)}]
+    )
     if not speech:
         raise ReviewRequired("No speech found in the selected audio track")
     # Use the same Silero VAD as faster-whisper, retaining original timestamps by
@@ -138,7 +141,7 @@ def _recognize(audio: Path, settings: Settings, cache: Path):
     return words, issues
 
 
-def transcribe_intel(audio: Path, settings: Settings, cache: Path):
+def transcribe_intel(audio: Path, settings: Settings, cache: Path, speech_filter: bool = True):
     from .inference import transcribe
 
     global _model, _key
@@ -149,7 +152,7 @@ def transcribe_intel(audio: Path, settings: Settings, cache: Path):
         "requested_backend": "xpu", "fallback_reason": None,
     }
     try:
-        return _recognize(audio, settings, cache)
+        return _recognize(audio, settings, cache, speech_filter=speech_filter)
     except (RuntimeError, ValueError, ImportError):
         if not settings.cpu_fallback:
             raise
@@ -158,7 +161,11 @@ def transcribe_intel(audio: Path, settings: Settings, cache: Path):
         gc.collect()
         # Retrying the entire bounded audio chunk also handles failures during decode,
         # rather than only failures while the model is being initialized.
-        result = transcribe(audio, settings.model_copy(update={"device": "cpu", "compute_type": "int8"}), cache)
+        cpu_settings = settings.model_copy(update={"device": "cpu", "compute_type": "int8"})
+        result = (
+            transcribe(audio, cpu_settings, cache) if speech_filter
+            else transcribe(audio, cpu_settings, cache, speech_filter=False)
+        )
         transcribe.runtime.update(
             requested_backend="xpu", fallback_reason="Intel GPU recognition failed; retried on CPU"
         )

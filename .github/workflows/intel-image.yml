@@ -33,10 +33,25 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
-      contents: read
+      contents: write
       packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+      - name: Read and guard Intel release version
+        id: version
+        run: |
+          version="$(python -c 'import re; from crowbarr.version import APPLICATION_VERSION as v; assert re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", v); print(v)')"
+          tagged="$(git ls-remote origin "refs/tags/v$version" "refs/tags/v$version^{}")"
+          if [[ -n "$tagged" ]]; then
+            tagged_commit="$(awk '$2 ~ /\^\{\}$/ {print $1; found=1} END {if (!found) print first} NR==1 {first=$1}' <<< "$tagged")"
+            if [[ "$tagged_commit" != "$GITHUB_SHA" ]]; then
+              echo "::error::Version $version already belongs to $tagged_commit; bump APPLICATION_VERSION."
+              exit 1
+            fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Free space for the XPU runtime
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost
@@ -61,6 +76,7 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=MIT
             org.opencontainers.image.title=Crowbarr Intel
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
           cache-from: type=gha,scope=intel
           cache-to: type=gha,mode=min,scope=intel,ignore-error=true
       - name: Verify installed dependencies
@@ -84,6 +100,18 @@ jobs:
             sleep 1
           done
           exit 1
+      - name: Build and verify compatible app update assets
+        run: |
+          python -m pip wheel --no-deps . -w dist
+          version="${{ steps.version.outputs.version }}"
+          python packaging/release_tools.py update-manifest "$version" "dist/crowbarr-$version-py3-none-any.whl" dist
+          docker run --rm --entrypoint python -v "$PWD/dist:/release:ro" crowbarr:intel-verify -c '
+          import json
+          from crowbarr.updates import runtime_mismatch
+          manifest = json.load(open("/release/crowbarr-update.json"))
+          reason = runtime_mismatch(manifest)
+          assert not reason, reason
+          print("Intel update manifest matches the installed XPU runtime")'
       - name: Publish commit image
         run: |
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
@@ -93,6 +121,7 @@ jobs:
           docker buildx imagetools inspect "$tag"
           echo "Intel image: \`$tag\`" >> "$GITHUB_STEP_SUMMARY"
       - name: Promote Intel channels if this is still the branch head
+        id: promote
         run: |
           head="$(git ls-remote origin refs/heads/intel | cut -f1)"
           if [[ "$head" != "$GITHUB_SHA" ]]; then
@@ -100,5 +129,17 @@ jobs:
             exit 0
           fi
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
-          docker buildx imagetools create -t "$image:intel" -t "$image:latest-intel" "$image:sha-$GITHUB_SHA-intel"
+          version="${{ steps.version.outputs.version }}"
+          docker buildx imagetools create -t "$image:$version-intel" -t "$image:intel" -t "$image:latest-intel" "$image:sha-$GITHUB_SHA-intel"
+          echo "promoted=true" >> "$GITHUB_OUTPUT"
           echo "Published \`$image:intel\` and \`$image:latest-intel\`." >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish Intel app update release
+        if: steps.promote.outputs.promoted == 'true'
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          tag="v$version"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --draft --target "$GITHUB_SHA" --title "Crowbarr Intel $version" --notes "Verified Intel image and compatible app update. Use ghcr.io/jmello86/crowbarr:$version-intel or Settings → Updates. See CHANGELOG.md for audit-policy changes."
+          fi
+          gh release upload "$tag" "dist/crowbarr-$version-py3-none-any.whl" dist/crowbarr-update.json --clobber
+          gh release edit "$tag" --draft=false --latest

@@ -14,6 +14,31 @@ refinement runs on the CPU in all variants.
 
 Speech models are not included in the images. They download into `/config`.
 
+The software for WhisperX timing refinement is not in either image either. To turn it
+on, open Settings, Speech processing, and select Download under Refinement software.
+It downloads about 240 MB, needs about 900 MB in `/config`, and needs internet access
+from the container. Without it, Crowbarr uses Whisper's own word timings.
+
+## Updating from inside Crowbarr
+
+Crowbarr checks GitHub for a new release every six hours. When there is one, the sidebar
+shows **Update to X**. Settings, Updates has the same controls.
+
+- **Update** installs a release that runs on the packages already in your image. Crowbarr
+  restarts itself in the same container in a few seconds. Jobs in progress resume.
+- If a release needs different packages, the page says so and shows the image tag to
+  switch to. Change the tag in your app or compose file.
+- **Install updates automatically** installs when no job is processing. It is off by
+  default.
+- **Check for updates automatically** turns the GitHub check off. The check sends only
+  Crowbarr's version number.
+- An installed update lives in `/config/updates`. A newer image replaces it on its own.
+- A new version that does not stay running is dropped after two tries, and Crowbarr goes
+  back to the image's version. The container must restart when the process exits, for
+  example `restart: unless-stopped`.
+- Crowbarr checks an update against a hash published with the release. Updates are not
+  signed, so you trust the GitHub account that publishes them.
+
 With the CUDA image, install the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html),
 add the device reservation shown below, and select CUDA in Settings after the first
@@ -89,6 +114,12 @@ The Intel variant uses reference Whisper with PyTorch XPU. The image includes
 Intel's Level Zero and OpenCL userspace drivers; the Linux host must expose a working
 Intel render device. See the [Intel driver guide](https://dgpu-docs.intel.com/installation-guides/installing-packages-from-the-intel-ppa.html)
 for the userspace packages and the [Unraid guide](unraid.md#intel-arc-a770) for Unraid.
+
+Unlike the smaller CPU/CUDA images, the Intel image bundles XPU-compatible PyTorch
+and WhisperX. It does not offer the CPU refinement software download. Settings →
+Updates checks this fork's releases and installs app updates only when their runtime
+manifest matches the installed Intel packages; otherwise pull a newer Intel image.
+Versioned images use `ghcr.io/jmello86/crowbarr:VERSION-intel`.
 
 From this repository, copy `.env.example` to `.env` and set the storage paths.
 Identify your Intel device with `ls -l /dev/dri/by-path/`, then set
