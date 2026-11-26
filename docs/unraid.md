@@ -80,6 +80,17 @@ python -c 'import torch; print(torch.xpu.is_available()); print(torch.xpu.get_de
 
 It should print `True`, the Intel device name, and a tensor. Run a job and check its
 runtime report for `xpu`; `cpu` with a fallback reason means GPU inference failed.
+From fork version 0.4.18, Dashboard → System shows the configured device and the
+current job's reported recognition hardware. Job details also record the GPU model,
+XPU index and precision. A cached transcript is labeled with its original device;
+this is not a claim that the GPU is busy now. Preparing audio and language checks
+can use the CPU before recognition reports its device.
+
+The Intel worker currently uses one GPU, XPU device 0 inside the container. Pass
+through only the render node for the GPU you want to use. Exposing both an Arc card
+and integrated graphics does not combine their processing capacity and can change
+which GPU is numbered 0. The displayed model name distinguishes them.
+
 Disable CPU fallback while diagnosing failures if you want the job to stop instead.
 Version 0.4.15 reports the Intel device name and GPU memory on the dashboard. These
 readings come from the isolated runtime probe and are labeled cached (up to five

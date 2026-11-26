@@ -100,6 +100,16 @@ release with split versioning requeues nothing.
 `APPLICATION_VERSION`. Identifies a published release. Changing it alone never
 re-audits anything.
 
+### 0.4.18
+
+- Show the configured recognition device, current job's actual device and compute
+  precision, and recognition hardware in job details. Identify Intel GPUs by their
+  runtime model name and XPU index; label CPU fallback and cached transcript origins.
+- Use explicit XPU device 0 consistently for recognition and hardware discovery.
+  Keep the Arc A770 as the only mapped render device to select it on a multi-GPU host.
+- Persist lightweight recognition telemetry per job and clear it on a new claim.
+  Audit policy, processing settings and recognition caches remain unchanged.
+
 ### 0.4.17
 
 - Merge official Crowbarr through upstream 0.4.15, including the redesigned UI,

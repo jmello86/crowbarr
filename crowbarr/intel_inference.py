@@ -54,7 +54,13 @@ def _load_model(settings: Settings, cache: Path):
         for module in model.modules():
             if isinstance(module, torch.nn.LayerNorm):
                 module.float()
-    model.to("xpu")
+    model.to("xpu:0")
+    # Use the same explicit device as the hardware probe, even when two Intel
+    # GPUs are exposed. Record the name after the model has reached that device.
+    try:
+        model._crowbarr_device_name = torch.xpu.get_device_name(0)
+    except Exception:
+        model._crowbarr_device_name = None
     model.register_buffer("alignment_heads", heads, persistent=False)
     # Arc has no FP64. Upstream DTW converts to double before moving to the CPU,
     # so move first. The alignment algorithm and its probabilities stay unchanged.
@@ -75,9 +81,14 @@ def _recognize(audio: Path, settings: Settings, cache: Path, speech_filter: bool
     from faster_whisper.audio import decode_audio
     from faster_whisper.vad import VadOptions, get_speech_timestamps
 
-    from .inference import transcribe
+    from .inference import publish_runtime, transcribe
 
     model = _load_model(settings, cache)
+    transcribe.runtime = {
+        **getattr(transcribe, "runtime", {}),
+        "device_name": getattr(model, "_crowbarr_device_name", None), "device_index": 0,
+    }
+    publish_runtime()
     samples = decode_audio(str(audio), sampling_rate=16000)
     duration = len(samples) / 16000
     speech = (
@@ -142,7 +153,8 @@ def _recognize(audio: Path, settings: Settings, cache: Path, speech_filter: bool
 
 
 def transcribe_intel(audio: Path, settings: Settings, cache: Path, speech_filter: bool = True):
-    from .inference import transcribe
+    from .db import StaleJob
+    from .inference import publish_runtime, runtime_reporter, transcribe
 
     global _model, _key
     if settings.compute_type not in {"float16", "float32"}:
@@ -153,6 +165,8 @@ def transcribe_intel(audio: Path, settings: Settings, cache: Path, speech_filter
     }
     try:
         return _recognize(audio, settings, cache, speech_filter=speech_filter)
+    except StaleJob:
+        raise  # A replaced job must not retry on the CPU merely to publish telemetry.
     except (RuntimeError, ValueError, ImportError):
         if not settings.cpu_fallback:
             raise
@@ -162,11 +176,23 @@ def transcribe_intel(audio: Path, settings: Settings, cache: Path, speech_filter
         # Retrying the entire bounded audio chunk also handles failures during decode,
         # rather than only failures while the model is being initialized.
         cpu_settings = settings.model_copy(update={"device": "cpu", "compute_type": "int8"})
-        result = (
-            transcribe(audio, cpu_settings, cache) if speech_filter
-            else transcribe(audio, cpu_settings, cache, speech_filter=False)
-        )
+        notify = runtime_reporter.get()
+
+        def fallback_runtime(runtime):
+            notify({**runtime, "requested_backend": "xpu",
+                    "fallback_reason": "Intel GPU recognition failed; retried on CPU"})
+
+        token = runtime_reporter.set(fallback_runtime) if notify else None
+        try:
+            result = (
+                transcribe(audio, cpu_settings, cache) if speech_filter
+                else transcribe(audio, cpu_settings, cache, speech_filter=False)
+            )
+        finally:
+            if token is not None:
+                runtime_reporter.reset(token)
         transcribe.runtime.update(
             requested_backend="xpu", fallback_reason="Intel GPU recognition failed; retried on CPU"
         )
+        publish_runtime()
         return result

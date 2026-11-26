@@ -7,6 +7,7 @@ import logging
 import math
 import textwrap
 import wave
+from contextvars import ContextVar
 from pathlib import Path
 
 from .config import Settings
@@ -18,6 +19,14 @@ log = logging.getLogger(__name__)
 _resident = None
 _resident_key = None
 _resident_runtime = {}
+runtime_reporter = ContextVar("recognition_runtime_reporter", default=None)
+
+
+def publish_runtime() -> None:
+    """Publish measured execution identity to the current job, when one is bound."""
+    notify = runtime_reporter.get()
+    if notify:
+        notify(dict(getattr(transcribe, "runtime", {})))
 
 
 BASE_PROBES = (1 / 6, 1 / 2, 5 / 6)
@@ -155,6 +164,7 @@ def transcribe(
         transcribe.runtime = _resident_runtime.copy()
     _resident_runtime = transcribe.runtime.copy()
     _resident, _resident_key = model, model_key
+    publish_runtime()
     # Automatic language detection is a guard against wrong/untagged audio; never translate for alignment.
     segments, info = model.transcribe(
         str(audio),
@@ -384,7 +394,8 @@ def transcribe_bounded(
                     ):
                         raise ValueError("Invalid checkpoint words")
                     chunk = restored
-                    transcribe.runtime = runtime
+                    transcribe.runtime = {**runtime, "cache_hit": True}
+                    publish_runtime()
                 except (ValueError, TypeError, KeyError, UnicodeError):
                     pass  # Recompute only this chunk; keep the other durable checkpoints.
             if chunk is None:

@@ -287,13 +287,28 @@ function jobButtons(job) {
   const id = `data-id="${job.id}"`;
   return `${button("Details", "details", "small", id)}${["queued", "waiting", "retry"].includes(job.state) ? button("Run next", "promote", "small", id) : ""}${["queued", "waiting", "retry", "processing"].includes(job.state) ? button(job.cancel_requested ? "Cancelling…" : "Cancel", "cancel", "small danger", `${id} ${job.cancel_requested ? "disabled" : ""}`) : ["failed", "review", "skipped", "unchanged", "completed"].includes(job.state) ? button("Retry", "retry", "small", id) : ""}`;
 }
+function recognitionHardware(runtime) {
+  if (typeof runtime === "string") {
+    try { runtime = JSON.parse(runtime); } catch { return "Not reported yet"; }
+  }
+  if (!runtime?.backend) return "Not reported yet";
+  let device = runtime.backend === "cpu" ? "CPU"
+    : runtime.device_name || (runtime.backend === "xpu" ? "Intel GPU (model not recorded)"
+      : runtime.backend === "cuda" ? "NVIDIA GPU (model not recorded)" : runtime.backend);
+  if (runtime.backend === "xpu" && Number.isInteger(runtime.device_index))
+    device += ` · XPU device ${runtime.device_index}`;
+  const precision = {float16: "FP16", float32: "FP32", int8: "INT8", int8_float16: "INT8 / FP16"}[runtime.compute_type];
+  if (precision) device += ` · ${precision}`;
+  if (runtime.fallback_reason) device += " · CPU fallback";
+  return runtime.cache_hit ? `Cached transcript · originally ${device}` : device;
+}
 function activeJob() {
   const job = status?.jobs.find((j) => j.state === "processing");
   if (!job && status?.scan_in_progress)
     return `<div class="worker-band idle">${icon("refresh")}<div class="idle-body"><strong>Syncing libraries</strong><span>Crowbarr is checking which files need work. Queue totals can change until this finishes.</span></div></div>`;
   if (!job)
     return `<div class="worker-band idle">${icon(status?.paused ? "pause" : status?.wait_reason ? "clock" : "check")}<div class="idle-body"><strong>${status?.paused ? "Queue paused" : status?.wait_reason ? "Waiting to process" : "Nothing running"}</strong><span>${esc(status?.wait_reason || "No job is currently processing.")}</span>${status?.wait_reason === "Hourly background budget reached" ? budgetMarkup() : cooldownMarkup()}</div></div>`;
-  return `<div class="worker-band"><div class="worker-media">${badge("processing")}<div class="active-title">${esc(title(job))}</div><span class="hint">${esc(origins[job.origin] || "Library scan")} · ${job.started ? duration(Date.now() / 1000 - job.started) + " elapsed" : "Starting"}</span></div><div class="worker-progress">${progressMarkup(job)}</div><div class="actions">${jobButtons(job)}</div></div>`;
+  return `<div class="worker-band"><div class="worker-media">${badge("processing")}<div class="active-title">${esc(title(job))}</div><span class="hint">${esc(origins[job.origin] || "Library scan")} · ${job.started ? duration(Date.now() / 1000 - job.started) + " elapsed" : "Starting"}</span><span class="hint">Recognition: ${esc(recognitionHardware(job.recognition_runtime))}</span></div><div class="worker-progress">${progressMarkup(job)}</div><div class="actions">${jobButtons(job)}</div></div>`;
 }
 
 function rows(items, compact = false) {
@@ -329,6 +344,7 @@ function serviceState(name, connected, sync) {
 
 function systemPanel() {
   const r = status?.resources || {};
+  const active = status?.jobs?.find(job => job.state === "processing");
   const size = (value) =>
     value == null ? "Unavailable" : value >= 1024 ? `${(value / 1024).toFixed(1)} GB` : `${fmt(value)} MB`;
   const model =
@@ -338,7 +354,9 @@ function systemPanel() {
     "Unavailable";
   const facts = [
     ["Speech model", model],
-    ["Processor", r.gpu || (r.gpu_status === "checking" ? "Checking…" : "No GPU detected")],
+    ["Configured recognition device", savedSettings?.device === "cpu" ? "CPU"
+      : r.gpu || (r.gpu_status === "checking" ? "Checking…" : "No GPU detected")],
+    ["Recognition device for current job", active ? recognitionHardware(active.recognition_runtime) : "Idle"],
     ["Free memory", size(r.ram_available_mb)],
   ];
   if (r.gpu && r.vram_total_mb) {
@@ -1454,10 +1472,9 @@ async function detail(id) {
         ]
       : []),
     [
-      "Runtime",
-      report.runtime
-        ? `${report.runtime.backend} · ${report.runtime.compute_type || ""}`
-        : "Not reported",
+      "Recognition hardware",
+      recognitionHardware(job.recognition_runtime || (job.state !== "processing" && report.runtime
+        ? {...report.runtime, cache_hit: report.transcript_cache_hit || report.runtime.cache_hit} : null)),
     ],
   ];
   if (report.language_evidence) {

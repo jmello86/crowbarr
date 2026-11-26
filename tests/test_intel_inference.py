@@ -30,7 +30,7 @@ def backend(monkeypatch):
         state.options = kwargs
         return state.result
 
-    model = SimpleNamespace(is_multilingual=False, transcribe=recognize)
+    model = SimpleNamespace(is_multilingual=False, transcribe=recognize, _crowbarr_device_name="Intel Arc A770")
     monkeypatch.setattr(intel_inference, "_load_model", lambda *a: model)
     monkeypatch.setattr(inference.transcribe, "progress", None, raising=False)
     monkeypatch.setitem(sys.modules, "whisper", SimpleNamespace())
@@ -56,6 +56,7 @@ def test_intel_recognition_retains_timeline_and_confidence(backend, tmp_path, in
     assert progress[-1] == (5, 10)
     assert inference.transcribe.runtime == {
         "backend": "xpu", "compute_type": "float16", "requested_backend": "xpu", "fallback_reason": None,
+        "device_name": "Intel Arc A770", "device_index": 0,
     }
 
 
@@ -172,7 +173,7 @@ def test_xpu_model_keeps_sparse_heads_on_cpu_and_moves_dtw_before_double(
     monkeypatch.setitem(sys.modules, "whisper", whisper)
     monkeypatch.setitem(sys.modules, "whisper.timing", timing)
     monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(
-        xpu=SimpleNamespace(is_available=lambda: True), set_num_threads=lambda *a: None,
+        xpu=SimpleNamespace(is_available=lambda: True, get_device_name=lambda index: "Intel Arc A770"), set_num_threads=lambda *a: None,
         nn=SimpleNamespace(LayerNorm=LayerNorm),
     ))
     monkeypatch.setattr(intel_inference, "_key", None)
@@ -180,7 +181,8 @@ def test_xpu_model_keeps_sparse_heads_on_cpu_and_moves_dtw_before_double(
     intel_settings = intel_settings.model_copy(update={"compute_type": precision})
     model = intel_inference._load_model(intel_settings, tmp_path)
     assert intel_inference._load_model(intel_settings, tmp_path) is model
-    assert events == (["half", "norm-float", "xpu"] if precision == "float16" else ["xpu"])
+    assert model._crowbarr_device_name == "Intel Arc A770"
+    assert events == (["half", "norm-float", "xpu:0"] if precision == "float16" else ["xpu:0"])
     tensor = SimpleNamespace(device=SimpleNamespace(type="xpu"), cpu=lambda: "cpu tensor")
     assert timing.dtw(tensor) == "cpu tensor"
 
@@ -194,3 +196,35 @@ def test_high_accuracy_intel_audit_bypasses_vad(backend, monkeypatch, tmp_path, 
     assert words[0].text == 'Hello'
     assert backend.options['clip_timestamps'] == [0, 10]
     assert inference.transcribe.runtime['backend'] == 'xpu'
+
+
+def test_cpu_fallback_identity_is_visible_before_cpu_recognition_finishes(monkeypatch, tmp_path, intel_settings):
+    from contextvars import ContextVar
+
+    events = []
+    monkeypatch.setattr(inference, 'runtime_reporter', ContextVar('test_runtime', default=events.append))
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError('GPU failed')
+
+    def cpu(audio, settings, cache):
+        cpu.runtime = {'backend': 'cpu', 'compute_type': 'int8', 'requested_backend': 'cpu', 'fallback_reason': None}
+        inference.publish_runtime()
+        assert events[-1]['backend'] == 'cpu'
+        assert events[-1]['requested_backend'] == 'xpu'
+        assert events[-1]['fallback_reason']
+        assert not events[-1].get('device_name')
+        return [Word(1, 2, 'Hello', 0.9)], []
+
+    monkeypatch.setattr(intel_inference, '_recognize', unavailable)
+    monkeypatch.setattr(inference, 'transcribe', cpu)
+    intel_inference.transcribe_intel(tmp_path / 'audio.wav', intel_settings, tmp_path)
+    assert inference.runtime_reporter.get() == events.append
+    assert events[-1]['backend'] == 'cpu'
+
+
+def test_adapter_smoke_call_does_not_require_a_previous_public_transcription(backend, monkeypatch, tmp_path, intel_settings):
+    monkeypatch.delattr(inference.transcribe, 'runtime', raising=False)
+    words, _ = intel_inference._recognize(tmp_path / 'audio.wav', intel_settings, tmp_path)
+    assert words[0].text == 'Hello'
+    assert inference.transcribe.runtime['device_name'] == 'Intel Arc A770'

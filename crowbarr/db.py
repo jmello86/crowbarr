@@ -65,6 +65,7 @@ class Database:
                 "directive": "TEXT NOT NULL DEFAULT ''",
                 "progress_current": "REAL",
                 "progress_total": "REAL",
+                "recognition_runtime": "TEXT",
                 "cached": "INTEGER",
                 "started": "REAL",
                 "generation": "INTEGER NOT NULL DEFAULT 0",
@@ -259,7 +260,7 @@ class Database:
             db.execute(
                 "UPDATE jobs SET signature=?,source=?,state=?,ready=?,created=?,updated=?,origin=?,priority=?,"
                 "stage='',attempts=0,error=NULL,cancel_requested=0,directive='',"
-                "progress_current=NULL,progress_total=NULL,started=NULL,cached=NULL,"
+                "progress_current=NULL,progress_total=NULL,started=NULL,cached=NULL,recognition_runtime=NULL,"
                 "generation=generation+1 WHERE id=?",
                 (signature, source, state, ready, now, now, origin, priority, row["id"]),
             )
@@ -316,7 +317,7 @@ class Database:
                 result = db.execute(
                     "UPDATE jobs SET signature=?,source=?,state=?,stage=?,error=?,report=?,output=?,"
                     "updated=?,attempts=0,cancel_requested=0,directive='',progress_current=NULL,"
-                    "progress_total=NULL,started=NULL,cached=NULL,generation=generation+1 "
+                    "progress_total=NULL,started=NULL,cached=NULL,recognition_runtime=NULL,generation=generation+1 "
                     "WHERE id=? AND generation=? AND state<>'processing' AND origin<>'manual' AND directive=''",
                     (signature, source, saved["state"], saved["stage"], saved["error"], saved["report"],
                      saved["output"], now, current_row["id"], current_row["generation"]),
@@ -596,7 +597,7 @@ class Database:
                         return None
                     db.execute(
                         "UPDATE jobs SET state='processing',stage='Preparing audio',attempts=attempts+1,"
-                        "updated=?,started=?,progress_current=NULL,progress_total=NULL,cached=NULL,"
+                        "updated=?,started=?,progress_current=NULL,progress_total=NULL,cached=NULL,recognition_runtime=NULL,"
                         "generation=generation+1,error=NULL WHERE id=?",
                         (now, now, row["id"]),
                     )
@@ -640,6 +641,7 @@ class Database:
             "directive",
             "progress_current",
             "progress_total",
+            "recognition_runtime",
             "started",
             "cached",
         }

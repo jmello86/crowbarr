@@ -155,3 +155,43 @@ def test_the_updates_page_says_when_nothing_is_new_and_ties_automatic_installs_t
 
     unchecked = render_updates({**BASE, "available": False}, update_check=False)
     assert 'name="auto_update" disabled' in unchecked
+
+
+@needs_node
+def test_recognition_hardware_distinguishes_gpu_models_fallback_and_cache():
+    program = excerpt('function recognitionHardware', 'function activeJob') + '''
+const arc = {backend: 'xpu', device_name: 'Intel Arc A770', device_index: 0, compute_type: 'float16'};
+console.log(JSON.stringify([
+  recognitionHardware(arc),
+  recognitionHardware({...arc, device_name: 'Intel UHD Graphics 770'}),
+  recognitionHardware({backend: 'cpu', compute_type: 'int8', fallback_reason: 'GPU failed'}),
+  recognitionHardware({...arc, cache_hit: true}),
+  recognitionHardware({backend: 'xpu'}),
+  recognitionHardware(JSON.stringify(arc)),
+  recognitionHardware(null), recognitionHardware('invalid JSON')
+]));
+'''
+    arc, integrated, cpu, cached, legacy, encoded, pending, invalid = run_node(program)
+    assert arc == 'Intel Arc A770 · XPU device 0 · FP16'
+    assert 'Intel UHD Graphics 770' in integrated
+    assert cpu == 'CPU · INT8 · CPU fallback'
+    assert cached == 'Cached transcript · originally ' + arc
+    assert legacy == 'Intel GPU (model not recorded)'
+    assert encoded == arc
+    assert pending == invalid == 'Not reported yet'
+
+
+@needs_node
+def test_system_panel_does_not_present_the_detected_gpu_as_cpu_execution():
+    program = '''
+const fmt = String, esc = String, ago = () => 'a minute ago';
+const SPEECH_MODELS = [], LEGACY_MODELS = {};
+const savedSettings = {device: 'xpu', model: 'large-v3-turbo'};
+const status = {jobs: [{state:'processing', recognition_runtime: JSON.stringify({backend:'cpu', compute_type:'int8', fallback_reason:'GPU failed'})}], resources:{gpu:'Intel Arc A770'}, integrations:[]};
+const panel = (name, body) => body;
+''' + excerpt('function recognitionHardware', 'function activeJob') + excerpt('function serviceState', 'function dashboard()') + '''
+console.log(JSON.stringify(systemPanel()));
+'''
+    markup = run_node(program)
+    assert 'Configured recognition device</dt><dd>Intel Arc A770' in markup
+    assert 'Recognition device for current job</dt><dd>CPU · INT8 · CPU fallback' in markup

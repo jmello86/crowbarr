@@ -331,6 +331,9 @@ def _recognized_words(
                     **payload.get("runtime", {"backend": "unknown (legacy cache)"}),
                     "cache_hit": True,
                 }
+                from .inference import publish_runtime
+
+                publish_runtime()
                 return words, list(payload.get("issues", [])), True
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             pass
@@ -388,6 +391,20 @@ def current(job: dict, settings: Settings) -> bool:
 
 
 def process(
+    job: dict, settings: Settings, directory: Path, db: Database, transcriber=None, aligner=None
+) -> dict:
+    from .inference import runtime_reporter
+
+    token = runtime_reporter.set(
+        lambda runtime: db.update(job["id"], recognition_runtime=json.dumps(runtime))
+    )
+    try:
+        return _process(job, settings, directory, db, transcriber, aligner)
+    finally:
+        runtime_reporter.reset(token)
+
+
+def _process(
     job: dict, settings: Settings, directory: Path, db: Database, transcriber=None, aligner=None
 ) -> dict:
     import time
